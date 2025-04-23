@@ -150,7 +150,7 @@ class Delete(AAZCommand):
         @property
         def content(self):
             operation_uri = {
-                f"https://management.azure.com/subscriptions/{self.ctx.subscription_id}"
+                f"https://eastus2euap.management.azure.com/subscriptions/{self.ctx.subscription_id}"
                 f"/resourceGroups/{self.ctx.args.resource_group}/providers/Microsoft.Cdn.profiles/{self.ctx.args.profile_name}"
                 "?api-version=2025-04-15"
             }
