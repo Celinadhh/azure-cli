@@ -77,6 +77,7 @@ class Delete(AAZCommand):
             response = self.AcquirePolicyToken(ctx=self.ctx)()
             token = response.get("token")
             print("Successfully received token, passing into header for profile delete")
+            self.ctx.args.policy_token = token
 
     @register_callback
     def post_operations(self):
