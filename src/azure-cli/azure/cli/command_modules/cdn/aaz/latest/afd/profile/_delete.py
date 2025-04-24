@@ -121,89 +121,13 @@ class Delete(AAZCommand):
         @property
         def url(self):
             return self.client.format_url(
-                "/subscriptions/{subscriptionId}/providers/Microsoft.Authorization/acquirePolicyToken",
-                **self.url_parameters
-            )
-
-        @property
-        def method(self):
-            return "DELETE"
-
-        @property
-        def error_format(self):
-            return "MgmtErrorFormat"
-
-        @property
-        def url_parameters(self):
-            parameters = {
-                **self.serialize_url_param(
-                    "subscriptionId", self.ctx.subscription_id,
-                    required=True,
-                ),
-            }
-            return parameters
-
-        @property
-        def query_parameters(self):
-            parameters = {
-                **self.serialize_query_param(
-                    "api-version", "2024-09-01",
-                    required=True,
-                ),
-            }
-            return parameters
-        
-        @property
-        def content(self):
-            operation_uri = {
-                f"https://eastus2euap.management.azure.com/subscriptions/{self.ctx.subscription_id}"
-                f"/resourceGroups/{self.ctx.args.resource_group}/providers/Microsoft.Cdn.profiles/{self.ctx.args.profile_name}"
-                "?api-version=2025-04-15"
-            }
-
-            return {
-                "operation": {
-                    "uri": operation_uri,
-                    "httpMethod": "DELETE"
-                }
-            }
-
-        @property
-        def header_parameters(self):
-            parameters = {
-                **self.serialize_header_param(
-                    "x-ms-policy-external-evaluations", self.ctx.policy_token if self.ctx.args.with_policy_tok else {},
-                ),
-            }
-            return parameters
-        
-        def on_200(self, session):
-            pass
-
-        def on_204(self, session):
-            pass
-    
-    class AcquirePolicyToken(AAZHttpOperation):
-        CLIENT_TYPE = "MgmtClient"
-        
-        def __call__(self, *args, **kwargs):
-            request = self.make_request()
-            session = self.client.send_request(request=request, stream=False, **kwargs)
-            if session.http_response.status_code in [200]:
-                return self.on_200(session)
-            
-            return self.on_error(session.http_response)
-
-        @property
-        def url(self):
-            return self.client.format_url(
                 "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Cdn/profiles/{profileName}",
                 **self.url_parameters
             )
 
         @property
         def method(self):
-            return "POST"
+            return "DELETE"
 
         @property
         def error_format(self):
@@ -231,7 +155,7 @@ class Delete(AAZCommand):
         def query_parameters(self):
             parameters = {
                 **self.serialize_query_param(
-                    "api-version", "2025-03-01",
+                    "api-version", "2024-09-01",
                     required=True,
                 ),
             }
@@ -248,13 +172,13 @@ class Delete(AAZCommand):
                 ),
             }
             return parameters
-
+        
         def on_200(self, session):
             pass
 
         def on_204(self, session):
             pass
-    
+
     class AcquirePolicyToken(AAZHttpOperation):
         CLIENT_TYPE = "MgmtClient"
         
