@@ -60,6 +60,12 @@ class Delete(AAZCommand):
             help="Indicates that a policy token should be acquired and included before deleting the AFD profile."
         )
 
+        _args_schema.change_reference = AAZStrArg(
+            options=["-change-ref"],
+            help="Id of the change reference associated with the afd delete that will be used to acquire policy token.",
+            nullable=True
+        )
+
         _args_schema.policy_token = AAZStrArg(
             nullable=True
         )
@@ -227,9 +233,12 @@ class Delete(AAZCommand):
                 "operation": {
                     "uri": operation_uri,
                     "httpMethod": "DELETE"
-                },
-                "changeReference": f"/subscriptions/{self.ctx.subscription_id}/resourceGroups/{self.ctx.args.resource_group}/providers/Microsoft.ChangeSafety/changeStates/zhaocelinac2/stageProgressions/breakglassStage"
+                }
             }
+            
+            if self.ctx.args.change_reference:
+                content["changeReference"] = str(self.ctx.args.change_reference)
+            
             print(f"Content: {content}")
             return content
         
