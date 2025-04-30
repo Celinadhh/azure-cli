@@ -59,13 +59,68 @@ class AcquirePolicyToken(AAZHttpOperation):
             }
 
             if self.ctx.args.http_method == "PUT":
+                _content_value, _builder = self.new_content_builder(
+                    self.ctx.args,
+                    typ=AAZObjectType,
+                    typ_kwargs={"flags": {"required": True, "client_flatten": True}}
+                )
+                _builder.set_prop("identity", AAZIdentityObjectType, ".identity")
+                _builder.set_prop("location", AAZStrType, ".location", typ_kwargs={"flags": {"required": True}})
+                _builder.set_prop("properties", AAZObjectType, typ_kwargs={"flags": {"client_flatten": True}})
+                _builder.set_prop("sku", AAZObjectType, ".", typ_kwargs={"flags": {"required": True}})
+                _builder.set_prop("tags", AAZDictType, ".tags")
+
+                identity = _builder.get(".identity")
+                if identity is not None:
+                    identity.set_prop("type", AAZStrType, ".type", typ_kwargs={"flags": {"required": True}})
+                    identity.set_prop("userAssignedIdentities", AAZDictType, ".user_assigned_identities")
+                    identity.set_prop("userAssigned", AAZListType, ".mi_user_assigned", typ_kwargs={"flags": {"action": "create"}})
+                    identity.set_prop("systemAssigned", AAZStrType, ".mi_system_assigned", typ_kwargs={"flags": {"action": "create"}})
+
+                user_assigned_identities = _builder.get(".identity.userAssignedIdentities")
+                if user_assigned_identities is not None:
+                    user_assigned_identities.set_elements(AAZObjectType, ".")
+
+                user_assigned = _builder.get(".identity.userAssigned")
+                if user_assigned is not None:
+                    user_assigned.set_elements(AAZStrType, ".")
+
+                properties = _builder.get(".properties")
+                if properties is not None:
+                    properties.set_prop("logScrubbing", AAZObjectType, ".log_scrubbing")
+                    properties.set_prop("originResponseTimeoutSeconds", AAZIntType, ".origin_response_timeout_seconds")
+
+                log_scrubbing = _builder.get(".properties.logScrubbing")
+                if log_scrubbing is not None:
+                    log_scrubbing.set_prop("scrubbingRules", AAZListType, ".scrubbing_rules")
+                    log_scrubbing.set_prop("state", AAZStrType, ".state")
+
+                scrubbing_rules = _builder.get(".properties.logScrubbing.scrubbingRules")
+                if scrubbing_rules is not None:
+                    scrubbing_rules.set_elements(AAZObjectType, ".")
+
+                _elements = _builder.get(".properties.logScrubbing.scrubbingRules[]")
+                if _elements is not None:
+                    _elements.set_prop("matchVariable", AAZStrType, ".match_variable", typ_kwargs={"flags": {"required": True}})
+                    _elements.set_prop("selector", AAZStrType, ".selector")
+                    _elements.set_prop("selectorMatchOperator", AAZStrType, ".selector_match_operator", typ_kwargs={"flags": {"required": True}})
+                    _elements.set_prop("state", AAZStrType, ".state")
+
+                sku = _builder.get(".sku")
+                if sku is not None:
+                    sku.set_prop("name", AAZStrType, ".sku")
+
+                tags = _builder.get(".tags")
+                if tags is not None:
+                    tags.set_elements(AAZStrType, ".")
+                
+                content = self.serialize_content(_content_value)
+
+                self.ctx.args.content = _content_value
+                print(f"Token content: {content}, arg: {self.ctx.args.content}, {self.serialize_content(self.ctx.args.content)}, val: {_content_value}, {self.serialize_content(_content_value)}")
+
                 operation["content"] = {
-                    "properties": {
-                        "location": "global",
-                        "sku": {
-                            "name": "Standard_AzureFrontDoor"
-                        }
-                    }
+                    "properties": content
                 }
 
             payload = {

@@ -192,7 +192,7 @@ class Create(AAZCommand):
             nullable=True
         )
 
-        _args_schema.context = AAZObjectArg()
+        _args_schema.content = AAZObjectArg()
         
         return cls._args_schema
 
@@ -370,8 +370,13 @@ class Create(AAZCommand):
             tags = _builder.get(".tags")
             if tags is not None:
                 tags.set_elements(AAZStrType, ".")
-            
+                
             content = self.serialize_content(_content_value)
+
+            if self.ctx.args.with_policy_token:
+                print("im getting content from token API")
+                print(f"content: {self.ctx.args.content}, {self.serialize_content(self.ctx.args.content)}")
+
             print(f"serialized content: {content}")
             return content
 
