@@ -16,3 +16,4 @@ from ._show import *
 from ._update import *
 from ._usage import *
 from ._wait import *
+from ._token import *

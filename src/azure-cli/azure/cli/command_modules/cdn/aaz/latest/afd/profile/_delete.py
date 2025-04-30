@@ -10,7 +10,6 @@
 
 from azure.cli.core.aaz import *
 
-
 @register_command(
     "afd profile delete",
 )
@@ -70,6 +69,10 @@ class Delete(AAZCommand):
             nullable=True
         )
 
+        _args_schema.http_method = AAZStrArg(
+            nullable=True
+        )
+
         return cls._args_schema
 
     def _execute_operations(self):
@@ -80,7 +83,9 @@ class Delete(AAZCommand):
     @register_callback
     def pre_operations(self):
         if self.ctx.args.with_policy_token:
-            response = self.AcquirePolicyToken(ctx=self.ctx)()
+            from azure.cli.command_modules.cdn.aaz.latest.afd.profile import AcquirePolicyToken
+            self.ctx.args.http_method = "DELETE"
+            response = AcquirePolicyToken(ctx=self.ctx)()
             token = response.get("token")
             print("Successfully received token, passing into header for profile delete")
             self.ctx.args.policy_token = token
@@ -183,87 +188,6 @@ class Delete(AAZCommand):
         def on_200(self, session):
             pass
 
-        def on_204(self, session):
-            pass
-
-    class AcquirePolicyToken(AAZHttpOperation):
-        CLIENT_TYPE = "MgmtClient"
-        
-        def __call__(self, *args, **kwargs):
-            print("Making request...")
-            request = self.make_request()
-            print(f"Request made with URL: {request.url} and Method: {self.method}")
-            session = self.client.send_request(request=request, stream=False, **kwargs)
-            
-            # Send the request
-            try:
-                session = self.client.send_request(request=request, stream=False, **kwargs)
-                print(f"Request sent. Received status code: {session.http_response.status_code}")
-            except Exception as e:
-                print(f"An error occurred while sending the request: {e}")
-                raise
-
-            # Check status code
-            if session.http_response.status_code == 200:
-                print("Handling 200 response...")
-                return self.on_200(session)
-            
-            print("Handling error response...")
-            return self.on_error(session.http_response)
-
-        @property
-        def url(self):
-            # format_url uses management.azure.com and acquirePolicyToken isn't available :(
-            url = f"https://eastus2euap.management.azure.com/subscriptions/{self.ctx.subscription_id}/providers/Microsoft.Authorization/acquirePolicyToken"
-            return url
-
-        @property
-        def method(self):
-            return "POST"
-
-        @property
-        def error_format(self):
-            return "MgmtErrorFormat"
-        
-        @property
-        def content(self):
-            operation_uri = f"https://eastus2euap.management.azure.com/subscriptions/{self.ctx.subscription_id}/resourceGroups/{self.ctx.args.resource_group}/providers/Microsoft.Cdn/profiles/{self.ctx.args.profile_name}?api-version=2025-04-15"
-
-            content = {
-                "operation": {
-                    "uri": operation_uri,
-                    "httpMethod": "DELETE"
-                }
-            }
-            
-            if self.ctx.args.change_reference:
-                content["changeReference"] = str(self.ctx.args.change_reference)
-            
-            print(f"Content: {content}")
-            return content
-        
-        @property
-        def query_parameters(self):
-            parameters = {
-                **self.serialize_query_param(
-                    "api-version", "2025-03-01",
-                    required=True,
-                ),
-            }
-            return parameters
-        
-        @property
-        def header_parameters(self):
-            parameters = {
-                **self.serialize_header_param(
-                    "Content-Type", "application/json",
-                ),
-            }
-            return parameters
-        
-        def on_200(self, session):
-            return self.deserialize_http_content(session)
-        
         def on_204(self, session):
             pass
 

@@ -172,15 +172,47 @@ class Create(AAZCommand):
             help="Name of the pricing tier.",
             enum={"Custom_Verizon": "Custom_Verizon", "Premium_AzureFrontDoor": "Premium_AzureFrontDoor", "Premium_Verizon": "Premium_Verizon", "StandardPlus_955BandWidth_ChinaCdn": "StandardPlus_955BandWidth_ChinaCdn", "StandardPlus_AvgBandWidth_ChinaCdn": "StandardPlus_AvgBandWidth_ChinaCdn", "StandardPlus_ChinaCdn": "StandardPlus_ChinaCdn", "Standard_955BandWidth_ChinaCdn": "Standard_955BandWidth_ChinaCdn", "Standard_Akamai": "Standard_Akamai", "Standard_AvgBandWidth_ChinaCdn": "Standard_AvgBandWidth_ChinaCdn", "Standard_AzureFrontDoor": "Standard_AzureFrontDoor", "Standard_ChinaCdn": "Standard_ChinaCdn", "Standard_Microsoft": "Standard_Microsoft", "Standard_Verizon": "Standard_Verizon"},
         )
+
+        _args_schema.with_policy_token = AAZBoolArg(
+            options=["--with-policy-token"],
+            help="Indicates that a policy token should be acquired and included before deleting the AFD profile."
+        )
+
+        _args_schema.change_reference = AAZStrArg(
+            options=["-change-ref"],
+            help="Id of the change reference associated with the afd delete that will be used to acquire policy token.",
+            nullable=True
+        )
+
+        _args_schema.policy_token = AAZStrArg(
+            nullable=True
+        )
+
+        _args_schema.http_method = AAZStrArg(
+            nullable=True
+        )
+
+        _args_schema.context = AAZObjectArg()
+        
         return cls._args_schema
 
     def _execute_operations(self):
         self.pre_operations()
+
+        if self.ctx.args.with_policy_token:
+            from azure.cli.command_modules.cdn.aaz.latest.afd.profile import AcquirePolicyToken
+            self.ctx.args.http_method = "PUT"
+            response = AcquirePolicyToken(ctx=self.ctx)()
+            token = response.get("token")
+            print("Successfully received token, passing into header for profile create")
+            self.ctx.args.policy_token = token
+
         yield self.ProfilesCreate(ctx=self.ctx)()
         self.post_operations()
 
     @register_callback
     def pre_operations(self):
+        # somehow this code is not getting called...
         pass
 
     @register_callback
@@ -220,10 +252,12 @@ class Create(AAZCommand):
 
         @property
         def url(self):
-            return self.client.format_url(
+            url = self.client.format_url(
                 "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Cdn/profiles/{profileName}",
                 **self.url_parameters
             )
+            print(f"url: {url}")
+            return url
 
         @property
         def method(self):
@@ -271,6 +305,13 @@ class Create(AAZCommand):
                     "Accept", "application/json",
                 ),
             }
+
+            if self.ctx.args.with_policy_token:
+                parameters.update(
+                    self.serialize_header_param(
+                        "x-ms-policy-external-evaluations", self.ctx.args.policy_token
+                    )
+                )
             return parameters
 
         @property
@@ -329,8 +370,10 @@ class Create(AAZCommand):
             tags = _builder.get(".tags")
             if tags is not None:
                 tags.set_elements(AAZStrType, ".")
-
-            return self.serialize_content(_content_value)
+            
+            content = self.serialize_content(_content_value)
+            print(f"serialized content: {content}")
+            return content
 
         def on_200_201(self, session):
             data = self.deserialize_http_content(session)
