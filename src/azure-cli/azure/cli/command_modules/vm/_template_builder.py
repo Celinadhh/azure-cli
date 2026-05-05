@@ -294,7 +294,7 @@ def build_msi_role_assignment(vm_vmss_name, vm_vmss_resource_id, role_definition
 
 
 def build_vm_resource(  # pylint: disable=too-many-locals, too-many-statements, too-many-branches
-        cmd, name, location, tags, size, storage_profile, nics, admin_username,
+        name, location, tags, size, storage_profile, nics, admin_username,
         availability_set_id=None, admin_password=None, ssh_key_values=None, ssh_key_path=None,
         image_reference=None, os_disk_name=None, custom_image_os_type=None, authentication_type=None,
         os_publisher=None, os_offer=None, os_sku=None, os_version=None, os_vhd_uri=None,
@@ -311,7 +311,8 @@ def build_vm_resource(  # pylint: disable=too-many-locals, too-many-statements, 
         enable_user_reboot_scheduled_events=None, enable_user_redeploy_scheduled_events=None,
         zone_placement_policy=None, include_zones=None, exclude_zones=None, align_regional_disks_to_vm_zone=None,
         wire_server_mode=None, imds_mode=None, wire_server_access_control_profile_reference_id=None,
-        imds_access_control_profile_reference_id=None, key_incarnation_id=None):
+        imds_access_control_profile_reference_id=None, key_incarnation_id=None, add_proxy_agent_extension=None,
+        disk_iops_read_write=None, disk_mbps_read_write=None):
 
     os_caching = disk_info['os'].get('caching')
 
@@ -568,7 +569,11 @@ def build_vm_resource(  # pylint: disable=too-many-locals, too-many-statements, 
                 data_disk['managedDisk']['diskEncryptionSet'] = {'id': data_disk_encryption_sets[i]}
         if data_disks:
             profile['dataDisks'] = data_disks
-
+            for data_disk in profile['dataDisks']:
+                if disk_iops_read_write is not None:
+                    data_disk['diskIOPSReadWrite'] = disk_iops_read_write
+                if disk_mbps_read_write is not None:
+                    data_disk['diskMBPSReadWrite'] = disk_mbps_read_write
         if disk_info['os'].get('diffDiskSettings'):
             profile['osDisk']['diffDiskSettings'] = disk_info['os']['diffDiskSettings']
 
@@ -695,6 +700,9 @@ def build_vm_resource(  # pylint: disable=too-many-locals, too-many-statements, 
     if imds:
         proxy_agent_settings['imds'] = imds
 
+    if add_proxy_agent_extension is not None:
+        proxy_agent_settings['addProxyAgentExtension'] = add_proxy_agent_extension
+
     if proxy_agent_settings:
         vm_properties['securityProfile']['proxyAgentSettings'] = proxy_agent_settings
 
@@ -729,7 +737,7 @@ def build_vm_resource(  # pylint: disable=too-many-locals, too-many-statements, 
         }
 
     vm = {
-        'apiVersion': cmd.get_api_version(ResourceType.MGMT_COMPUTE, operation_group='virtual_machines'),
+        'apiVersion': '2025-04-01',
         'type': 'Microsoft.Compute/virtualMachines',
         'name': name,
         'location': location,
@@ -760,7 +768,7 @@ def build_vm_resource(  # pylint: disable=too-many-locals, too-many-statements, 
     if exclude_zones is not None:
         placement['excludeZones'] = exclude_zones
     if placement:
-        vm['Placement'] = placement
+        vm['placement'] = placement
 
     return vm
 
@@ -1039,10 +1047,16 @@ def build_vmss_resource(cmd, name, computer_name_prefix, location, tags, overpro
                         security_posture_reference_id=None, security_posture_reference_exclude_extensions=None,
                         enable_resilient_vm_creation=None, enable_resilient_vm_deletion=None,
                         additional_scheduled_events=None, enable_user_reboot_scheduled_events=None,
-                        enable_user_redeploy_scheduled_events=None, skuprofile_vmsizes=None, skuprofile_allostrat=None,
+                        enable_user_redeploy_scheduled_events=None, skuprofile_vmsizes=None,
+                        skuprofile_allostrat=None, skuprofile_rank=None,
                         security_posture_reference_is_overridable=None, zone_balance=None, wire_server_mode=None,
-                        imds_mode=None, wire_server_access_control_profile_reference_id=None,
-                        imds_access_control_profile_reference_id=None):
+                        imds_mode=None, add_proxy_agent_extension=None,
+                        wire_server_access_control_profile_reference_id=None,
+                        imds_access_control_profile_reference_id=None, enable_automatic_zone_balancing=None,
+                        automatic_zone_balancing_strategy=None, automatic_zone_balancing_behavior=None,
+                        enable_automatic_repairs=None, zone_placement_policy=None, include_zones=None,
+                        exclude_zones=None, max_zone_count=None, instance_percent_policy=None,
+                        max_instance_percent=None):
 
     # Build IP configuration
     ip_configuration = {}
@@ -1530,12 +1544,47 @@ def build_vmss_resource(cmd, name, computer_name_prefix, location, tags, overpro
     if scale_in_policy:
         vmss_properties['scaleInPolicy'] = {'rules': scale_in_policy}
 
-    if enable_resilient_vm_creation is not None or enable_resilient_vm_deletion is not None:
-        resiliency_policy = {}
-        if enable_resilient_vm_creation is not None:
-            resiliency_policy['resilientVMCreationPolicy'] = {'enabled': enable_resilient_vm_creation}
-        if enable_resilient_vm_deletion is not None:
-            resiliency_policy['resilientVMDeletionPolicy'] = {'enabled': enable_resilient_vm_deletion}
+    resiliency_policy = {}
+    if enable_resilient_vm_creation is not None:
+        resiliency_policy['resilientVMCreationPolicy'] = {'enabled': enable_resilient_vm_creation}
+    if enable_resilient_vm_deletion is not None:
+        resiliency_policy['resilientVMDeletionPolicy'] = {'enabled': enable_resilient_vm_deletion}
+
+    automatic_zone_rebalancing_policy = {}
+    if enable_automatic_zone_balancing is not None:
+        automatic_zone_rebalancing_policy['enabled'] = enable_automatic_zone_balancing
+        if enable_automatic_zone_balancing is True and enable_automatic_repairs is not None:
+            automatic_repairs_policy = {'enabled': enable_automatic_repairs}
+            vmss_properties['automaticRepairsPolicy'] = automatic_repairs_policy
+
+    if automatic_zone_balancing_strategy is not None:
+        automatic_zone_rebalancing_policy['rebalanceStrategy'] = automatic_zone_balancing_strategy
+
+    if automatic_zone_balancing_behavior is not None:
+        automatic_zone_rebalancing_policy['rebalanceBehavior'] = automatic_zone_balancing_behavior
+
+    if automatic_zone_rebalancing_policy:
+        resiliency_policy['automaticZoneRebalancingPolicy'] = automatic_zone_rebalancing_policy
+
+    zone_allocation_policy = {}
+    if max_zone_count is not None:
+        zone_allocation_policy['maxZoneCount'] = max_zone_count
+
+    if instance_percent_policy is not None or max_instance_percent is not None:
+        policy = {}
+
+        if instance_percent_policy is not None:
+            policy['enabled'] = instance_percent_policy
+
+        if max_instance_percent is not None:
+            policy['value'] = max_instance_percent
+
+        zone_allocation_policy['maxInstancePercentPerZonePolicy'] = policy
+
+    if zone_allocation_policy:
+        resiliency_policy['zoneAllocationPolicy'] = zone_allocation_policy
+
+    if resiliency_policy:
         vmss_properties['resiliencyPolicy'] = resiliency_policy
 
     security_profile = {}
@@ -1577,6 +1626,9 @@ def build_vmss_resource(cmd, name, computer_name_prefix, location, tags, overpro
 
     if imds:
         proxy_agent_settings['imds'] = imds
+
+    if add_proxy_agent_extension is not None:
+        proxy_agent_settings['addProxyAgentExtension'] = add_proxy_agent_extension
 
     if proxy_agent_settings:
         security_profile['proxyAgentSettings'] = proxy_agent_settings
@@ -1634,6 +1686,16 @@ def build_vmss_resource(cmd, name, computer_name_prefix, location, tags, overpro
                 'name': vm_size
             }
             sku_profile_vmsizes_list.append(vmsize_obj)
+
+        if skuprofile_rank:
+            if len(skuprofile_rank) != len(skuprofile_vmsizes):
+                raise ValidationError(
+                    'The SKU profile rank list does not specify a rank for every VM size. ' +
+                    'The number of ranks must match the number of VM sizes.')
+
+            for vm_size, rank in zip(sku_profile_vmsizes_list, skuprofile_rank):
+                vm_size['rank'] = rank
+
         sku_profile = {
             'vmSizes': sku_profile_vmsizes_list,
             'allocationStrategy': skuprofile_allostrat
@@ -1645,7 +1707,7 @@ def build_vmss_resource(cmd, name, computer_name_prefix, location, tags, overpro
         'name': name,
         'location': location,
         'tags': tags,
-        'apiVersion': cmd.get_api_version(ResourceType.MGMT_COMPUTE, operation_group='virtual_machine_scale_sets'),
+        'apiVersion': '2025-04-01',
         'dependsOn': [],
         'properties': vmss_properties
     }
@@ -1664,6 +1726,16 @@ def build_vmss_resource(cmd, name, computer_name_prefix, location, tags, overpro
 
     if edge_zone:
         vmss['extendedLocation'] = edge_zone
+
+    placement = {}
+    if zone_placement_policy is not None:
+        placement['zonePlacementPolicy'] = zone_placement_policy
+    if include_zones is not None:
+        placement['includeZones'] = include_zones
+    if exclude_zones is not None:
+        placement['excludeZones'] = exclude_zones
+    if placement:
+        vmss['placement'] = placement
 
     return vmss
 

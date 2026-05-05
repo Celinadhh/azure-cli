@@ -55,7 +55,22 @@ class ProfileCommandsLoader(AzCommandsLoader):
             c.argument('allow_no_subscriptions', action='store_true',
                        help="Support accessing tenants without subscriptions. It's useful to run "
                             "tenant-level commands, such as 'az ad'.")
+            c.argument('claims_challenge',
+                       help="Base64-encoded claims challenge requested by a resource API in the "
+                            "WWW-Authenticate header.")
             c.ignore('_subscription')  # hide the global subscription parameter
+
+            # Skip subscription discovery
+            c.argument('skip_subscription_discovery', options_list=['--skip-subscription-discovery', '--skip-sub'],
+                       action='store_true',
+                       help='Skip the subscription discovery process during login. '
+                            'Requires --tenant. Use with --subscription to '
+                            'fetch a single subscription without listing all.')
+            c.argument('subscription', options_list=['--subscription', '-s'],
+                       help='Subscription ID or name to set as the default. '
+                            'When combined with --skip-subscription-discovery, '
+                            'only this subscription is retrieved via a direct API call '
+                            '(must be a subscription ID, not a name).')
 
             # Device code flow
             c.argument('use_device_code', action='store_true',

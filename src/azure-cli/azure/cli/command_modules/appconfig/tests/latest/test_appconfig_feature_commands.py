@@ -4,11 +4,13 @@
 # --------------------------------------------------------------------------------------------
 
 import os
+from unittest import mock
 
 from knack.util import CLIError
 from azure.cli.testsdk import (ResourceGroupPreparer, ScenarioTest)
 from azure.cli.testsdk.checkers import NoneCheck
 from azure.cli.command_modules.appconfig._constants import FeatureFlagConstants
+from azure.cli.core.azclierror import InvalidArgumentValueError
 from azure.cli.testsdk.scenario_tests import AllowLargeResponse
 from azure.cli.command_modules.appconfig.tests.latest._test_utils import create_config_store, CredentialResponseSanitizer, get_resource_name_prefix
 
@@ -78,6 +80,23 @@ class AppConfigFeatureScenarioTest(ScenarioTest):
                          self.check('conditions.client_filters', []),
                          self.check('conditions.requirement_type', updated_requirement_type)])
 
+        # update an existing feature flag entry with requirement type "all" (case-insensitive input, should be stored as "All")
+        case_sensitive_requirement_type = FeatureFlagConstants.REQUIREMENT_TYPE_ALL
+
+        self.kwargs.update({
+            'description': updated_entry_description,
+            'requirement_type': "all"
+        })
+        self.cmd('appconfig feature set -n {config_store_name} --feature {feature} --label {label} --description "{description}" --requirement-type {requirement_type} -y',
+             checks=[self.check('locked', default_locked),
+                 self.check('name', entry_feature),
+                 self.check('key', internal_feature_key),
+                 self.check('description', updated_entry_description),
+                 self.check('label', entry_label),
+                 self.check('state', default_state),
+                 self.check('conditions.client_filters', []),
+                 self.check('conditions.requirement_type', case_sensitive_requirement_type)])
+
         # add a new label - this should create a new KV in the config store
         updated_label = 'v2'
         self.kwargs.update({
@@ -108,7 +127,7 @@ class AppConfigFeatureScenarioTest(ScenarioTest):
                          self.check('state', default_state),
                          self.check('conditions', default_conditions)])
 
-        # show a feature flag with all 8 fields
+        # show a feature flag with all 13 fields
         response_dict = self.cmd('appconfig feature show -n {config_store_name} --feature {feature} --label {label}',
                                  checks=[self.check('locked', default_locked),
                                          self.check('name', entry_feature),
@@ -121,7 +140,7 @@ class AppConfigFeatureScenarioTest(ScenarioTest):
                                          self.check('allocation', None),
                                          self.check('variants', None),
                                          self.check('telemetry', None)]).get_output_in_json()
-        assert len(response_dict) == 12
+        assert len(response_dict) == 13
 
         # show a feature flag with field filtering
         response_dict = self.cmd('appconfig feature show -n {config_store_name} --feature {feature} --label {label} --fields key label state locked',
@@ -273,6 +292,118 @@ class AppConfigFeatureScenarioTest(ScenarioTest):
 
         with self.assertRaisesRegex(CLIError, "Bad Request"):
             self.cmd('appconfig feature list -n {config_store_name} --feature {feature}')
+
+        # # Filter by tags test
+
+        # Set feature with 5 tags
+        feature_with_tags = "FeatureWithTags"
+        label_with_tags = "labelWithTags"
+        tags = {
+            "tag1": "value1",
+            "tag2": "value2",
+            "tag3": "value3",
+            "tag4": "value4",
+            "tag5": "value5"
+        }
+        tags_str = ' '.join([f"{k}={v}" for k, v in tags.items()])
+
+        self.kwargs.update({
+            'feature': feature_with_tags,
+            'label': label_with_tags,
+            'tags': tags_str
+        })
+
+        self.cmd('appconfig feature set -n {config_store_name} --feature {feature} --label {label} --tags {tags} -y',
+             checks=[self.check('name', feature_with_tags),
+             self.check('label', label_with_tags),
+            self.check('tags', tags)])
+
+        # List features with 5 tags
+        list_features = self.cmd('appconfig feature list -n {config_store_name} --feature {feature} --tags {tags}').get_output_in_json()
+        assert(list_features[0]['name'] == feature_with_tags)
+        assert(list_features[0]['label'] == label_with_tags)
+        assert(list_features[0]['tags'] == tags)
+        assert len(list_features) == 1
+
+        # Set feature with tag1 only
+        tag1_dict = {"tag1": "value1"}
+        tag1 = ' '.join([f"{k}={v}" for k, v in tag1_dict.items()])
+        label_with_tag1 = "labelWithTag1"
+        self.kwargs.update({
+            'label': label_with_tag1,
+            'tag1': tag1
+        })
+
+        self.cmd('appconfig feature set -n {config_store_name} --feature {feature} --label {label} --tags {tag1} -y',
+             checks=[self.check('name', feature_with_tags),
+                 self.check('label', label_with_tag1),
+                 self.check('tags', tag1_dict)])
+
+        # List features with tag1
+        list_features = self.cmd('appconfig feature list -n {config_store_name} --feature {feature} --tags {tag1}').get_output_in_json()
+        assert len(list_features) == 2
+
+        # Set feature with empty tag value
+        empty_tag_value_dict = {"tag1": ""}
+        tag_with_empty_value = ' '.join([f"{k}={v}" for k, v in empty_tag_value_dict.items()])
+        label_with_empty_tag_value = "labelWithEmptyTagValue"
+        self.kwargs.update({
+            'label': label_with_empty_tag_value,
+            'tag_with_empty_value': tag_with_empty_value
+        })
+
+        self.cmd('appconfig feature set -n {config_store_name} --feature {feature} --label {label} --tags {tag_with_empty_value} -y',
+             checks=[self.check('name', feature_with_tags),
+                 self.check('label', label_with_empty_tag_value),
+                 self.check('tags', empty_tag_value_dict)])
+
+        # List features with tag with empty value
+        list_features = self.cmd('appconfig feature list -n {config_store_name} --feature {feature} --tags {tag_with_empty_value}').get_output_in_json()
+        assert len(list_features) == 1
+
+        # Get all features with all tags
+        list_features = self.cmd('appconfig feature list -n {config_store_name} --feature {feature}').get_output_in_json()
+        assert len(list_features) == 3
+
+        # Delete features with tags tag1=value1
+        self.kwargs.update({
+            'label': '*'
+        })
+
+        deleted_features = self.cmd('appconfig feature delete -n {config_store_name} --feature {feature} --label {label} --tags {tag1} -y',
+             checks=[self.check('[0].name', feature_with_tags),
+                    self.check('[0].label', label_with_tag1),
+                    self.check('[0].tags', tag1_dict)]).get_output_in_json()
+        assert(len(deleted_features) == 2)
+
+        # delete feature with empty tag value
+        self.kwargs.update({
+            'feature': feature_with_tags,
+            'label': label_with_empty_tag_value
+        })
+        deleted_features = self.cmd('appconfig feature delete -n {config_store_name} --feature {feature} --label {label} --tags {tag_with_empty_value} -y',
+                checks=[self.check('[0].name', feature_with_tags),
+                        self.check('[0].label', label_with_empty_tag_value),
+                        self.check('[0].tags', empty_tag_value_dict)]).get_output_in_json()
+        assert(len(deleted_features) == 1)
+
+        # Error if more than 5 tags are provided
+        too_many_tags = {
+            "tag1": "value1",
+            "tag2": "value2",
+            "tag3": "value3",
+            "tag4": "value4",
+            "tag5": "value5",
+            "tag6": "value6"
+        }
+        too_many_tags_str = ' '.join([f"{k}={v}" for k, v in too_many_tags.items()])
+
+        self.kwargs.update({
+            'too_many_tags': too_many_tags_str
+        })
+
+        with self.assertRaisesRegex(InvalidArgumentValueError, "Too many tag filters provided. Maximum allowed is 5."):
+            self.cmd('appconfig feature list -n {config_store_name} --tags {too_many_tags}')
 
         # Delete Beta (label v2) feature flag using connection-string
         self.kwargs.update({
@@ -435,6 +566,89 @@ class AppConfigFeatureScenarioTest(ScenarioTest):
 
         with self.assertRaisesRegex(CLIError, "Feature name cannot contain the following characters: '%', ':'"):
             self.cmd('appconfig feature set -n {config_store_name} --feature {feature}')
+
+    @AllowLargeResponse()
+    @ResourceGroupPreparer(parameter_name_for_location='location')
+    def test_azconfig_feature_telemetry(self, resource_group, location):
+        """Test feature flag telemetry functionality."""
+        feature_telemetry_store_prefix = get_resource_name_prefix('FeatureTelemetryTest')
+        config_store_name = self.create_random_name(prefix=feature_telemetry_store_prefix, length=24)
+
+        location = 'eastus'
+        sku = 'standard'
+        self.kwargs.update({
+            'config_store_name': config_store_name,
+            'rg_loc': location,
+            'rg': resource_group,
+            'sku': sku
+        })
+        create_config_store(self, self.kwargs)
+
+        # Test creating a feature with telemetry enabled
+        feature_name = 'TelemetryFeature'
+        entry_label = 'v1'
+        default_locked = False
+        default_state = "off"
+
+        self.kwargs.update({
+            'feature': feature_name,
+            'label': entry_label
+        })
+
+        # Create feature with telemetry enabled
+        self.cmd('appconfig feature set -n {config_store_name} --feature {feature} --label {label} --telemetry-enabled true -y',
+                 checks=[self.check('locked', default_locked),
+                         self.check('name', feature_name),
+                         self.check('label', entry_label),
+                         self.check('state', default_state),
+                         self.check('telemetry.enabled', True)])
+
+        # Show feature to verify telemetry is persisted
+        self.cmd('appconfig feature show -n {config_store_name} --feature {feature} --label {label}',
+                 checks=[self.check('name', feature_name),
+                         self.check('telemetry.enabled', True)])
+
+        # Update feature to disable telemetry
+        self.cmd('appconfig feature set -n {config_store_name} --feature {feature} --label {label} --telemetry-enabled false -y',
+                 checks=[self.check('name', feature_name),
+                         self.check('telemetry.enabled', False)])
+
+        # Verify telemetry is disabled
+        self.cmd('appconfig feature show -n {config_store_name} --feature {feature} --label {label}',
+                 checks=[self.check('name', feature_name),
+                         self.check('telemetry.enabled', False)])
+
+        # Verify warning is emitted when enabling telemetry without App Insights linked
+        with mock.patch('azure.cli.command_modules.appconfig.feature.logger') as mock_logger:
+            self.cmd('appconfig feature set -n {config_store_name} --feature {feature} --label {label} --telemetry-enabled true -y',
+                     checks=[self.check('name', feature_name),
+                             self.check('telemetry.enabled', True)])
+            mock_logger.warning.assert_any_call(
+                "App Insights resource for the App Configuration store is not set."
+                "To collect telemetry, connect to an App Insights resource."
+            )
+
+        # Link App Insights to the store
+        # Use a fake resource ID because the application-insights extension cannot be installed
+        # in recording/playback mode — the extension index response exceeds the VCR 1024KB limit.
+        app_insights_prefix = get_resource_name_prefix('appinsights')
+        app_insights_name = self.create_random_name(prefix=app_insights_prefix, length=24)
+        app_insights_id = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/{}/providers/microsoft.insights/components/{}'.format(resource_group, app_insights_name)
+        self.kwargs.update({
+            'app_insights_resource_id': app_insights_id
+        })
+        self.cmd('appconfig update -n {config_store_name} -g {rg} --appinsights-resource {app_insights_resource_id}',
+                 checks=[self.check('telemetry.resourceId', app_insights_id)])
+
+        # Verify no warning when enabling telemetry with App Insights linked
+        with mock.patch('azure.cli.command_modules.appconfig.feature.logger') as mock_logger:
+            self.cmd('appconfig feature set -n {config_store_name} --feature {feature} --label {label} --telemetry-enabled true -y',
+                     checks=[self.check('name', feature_name),
+                             self.check('telemetry.enabled', True)])
+            # The "not set" warning should not have been emitted
+            warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+            assert not any("App Insights resource for the App Configuration store is not set" in w for w in warning_calls), \
+                "Expected no App Insights warning after linking, but warning was emitted"
 
 
 class AppConfigFeatureFilterScenarioTest(ScenarioTest):
@@ -694,3 +908,4 @@ class AppConfigFeatureFilterScenarioTest(ScenarioTest):
         self.cmd('appconfig feature filter add -n {config_store_name} --feature {feature} --label {label} --filter-name {filter_name} --filter-parameters {filter_parameters} -y',
                  checks=[self.check('name', filter_name),
                          self.check('parameters', filter_params_output)])
+

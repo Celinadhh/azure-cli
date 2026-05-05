@@ -73,7 +73,12 @@ from azure.mgmt.cosmosdb.models import (
     ServiceType,
     MongoRoleDefinitionCreateUpdateParameters,
     MongoUserDefinitionCreateUpdateParameters,
-    RegionForOnlineOffline
+    RegionForOnlineOffline,
+    FleetResource,
+    FleetspaceResource,
+    FleetspacePropertiesThroughputPoolConfiguration,
+    FleetspaceAccountResource,
+    FleetspaceAccountPropertiesGlobalDatabaseAccountProperties
 )
 
 logger = get_logger(__name__)
@@ -119,6 +124,7 @@ def cli_cosmosdb_create(cmd,
                         virtual_network_rules=None,
                         enable_multiple_write_locations=None,
                         disable_key_based_metadata_write_access=None,
+                        disable_local_auth=None,
                         key_uri=None,
                         public_network_access=None,
                         enable_analytical_storage=None,
@@ -143,7 +149,9 @@ def cli_cosmosdb_create(cmd,
                         enable_partition_merge=None,
                         enable_burst_capacity=None,
                         enable_prpp_autoscale=None,
-                        minimal_tls_version=None):
+                        minimal_tls_version=None,
+                        enable_pbe=None,
+                        default_priority_level=None):
     """Create a new Azure Cosmos DB database account."""
 
     from azure.cli.core.commands.client_factory import get_mgmt_service_client
@@ -174,6 +182,7 @@ def cli_cosmosdb_create(cmd,
                                     virtual_network_rules=virtual_network_rules,
                                     enable_multiple_write_locations=enable_multiple_write_locations,
                                     disable_key_based_metadata_write_access=disable_key_based_metadata_write_access,
+                                    disable_local_auth=disable_local_auth,
                                     key_uri=key_uri,
                                     public_network_access=public_network_access,
                                     enable_analytical_storage=enable_analytical_storage,
@@ -199,7 +208,9 @@ def cli_cosmosdb_create(cmd,
                                     enable_partition_merge=enable_partition_merge,
                                     enable_burst_capacity=enable_burst_capacity,
                                     enable_prpp_autoscale=enable_prpp_autoscale,
-                                    minimal_tls_version=minimal_tls_version)
+                                    minimal_tls_version=minimal_tls_version,
+                                    enable_pbe=enable_pbe,
+                                    default_priority_level=default_priority_level)
 
 
 # pylint: disable=too-many-statements
@@ -220,6 +231,7 @@ def _create_database_account(client,
                              virtual_network_rules=None,
                              enable_multiple_write_locations=None,
                              disable_key_based_metadata_write_access=None,
+                             disable_local_auth=None,
                              key_uri=None,
                              public_network_access=None,
                              enable_analytical_storage=None,
@@ -246,7 +258,10 @@ def _create_database_account(client,
                              enable_burst_capacity=None,
                              enable_prpp_autoscale=None,
                              minimal_tls_version=None,
-                             disable_ttl=None):
+                             disable_ttl=None,
+                             enable_pbe=None,
+                             default_priority_level=None,
+                             source_backup_location=None):
 
     consistency_policy = None
     if default_consistency_level is not None:
@@ -257,6 +272,11 @@ def _create_database_account(client,
     if not locations:
         locations = []
         locations.append(Location(location_name=arm_location, failover_priority=0, is_zone_redundant=False))
+
+    for loc in locations:
+        if loc.failover_priority == 0:
+            arm_location = loc.location_name
+            break
 
     managed_service_identity = None
     SYSTEM_ID = '[system]'
@@ -355,6 +375,9 @@ def _create_database_account(client,
         if disable_ttl is not None:
             restore_parameters.restore_with_ttl_disabled = disable_ttl
 
+        if source_backup_location is not None:
+            restore_parameters.source_backup_location = source_backup_location
+
     params = DatabaseAccountCreateUpdateParameters(
         location=arm_location,
         locations=locations,
@@ -368,6 +391,7 @@ def _create_database_account(client,
         virtual_network_rules=virtual_network_rules,
         enable_multiple_write_locations=enable_multiple_write_locations,
         disable_key_based_metadata_write_access=disable_key_based_metadata_write_access,
+        disable_local_auth=disable_local_auth,
         key_vault_key_uri=key_uri,
         public_network_access=public_network_access,
         api_properties=api_properties,
@@ -384,12 +408,28 @@ def _create_database_account(client,
         enable_partition_merge=enable_partition_merge,
         enable_burst_capacity=enable_burst_capacity,
         enable_per_region_per_partition_autoscale=enable_prpp_autoscale,
-        minimal_tls_version=minimal_tls_version
+        minimal_tls_version=minimal_tls_version,
+        enable_pbe=enable_pbe,
+        default_priority_level=default_priority_level
     )
 
     async_docdb_create = client.begin_create_or_update(resource_group_name, account_name, params)
-    docdb_account = async_docdb_create.result()
-    docdb_account = client.get(resource_group_name, account_name)  # Workaround
+    try:
+        docdb_account = async_docdb_create.result()
+    except HttpResponseError as ex:
+        message = str(ex)
+        if (is_restore_request and
+                ex.status_code == 403 and
+                "does not exist" in message and
+                ("Database Account" in message or "Forbidden" in message)):
+            logger.warning(
+                "Encountered known service issue (403 'does not exist') while restoring Cosmos DB account '%s' "
+                "in resource group '%s'. Using client.get() as a workaround. Raw error: %s",
+                account_name, resource_group_name, ex
+            )
+            docdb_account = client.get(resource_group_name, account_name)
+        else:
+            raise ex
     return docdb_account
 
 
@@ -409,6 +449,7 @@ def cli_cosmosdb_update(client,
                         virtual_network_rules=None,
                         enable_multiple_write_locations=None,
                         disable_key_based_metadata_write_access=None,
+                        disable_local_auth=None,
                         key_uri=None,
                         public_network_access=None,
                         enable_analytical_storage=None,
@@ -425,7 +466,9 @@ def cli_cosmosdb_update(client,
                         enable_partition_merge=None,
                         enable_burst_capacity=None,
                         enable_prpp_autoscale=None,
-                        minimal_tls_version=None):
+                        minimal_tls_version=None,
+                        enable_pbe=None,
+                        default_priority_level=None):
     """Update an existing Azure Cosmos DB database account. """
     existing = client.get(resource_group_name, account_name)
 
@@ -436,10 +479,10 @@ def cli_cosmosdb_update(client,
         update_consistency_policy = True
 
     if network_acl_bypass_resource_ids is not None:
-        from azure.mgmt.core.tools import is_valid_resource_id
         from azure.cli.core.azclierror import InvalidArgumentValueError
+        from azure.cli.command_modules.cosmosdb._validators import is_valid_network_acl_bypass_resource_id
         for resource_id in network_acl_bypass_resource_ids:
-            if not is_valid_resource_id(resource_id):
+            if not is_valid_network_acl_bypass_resource_id(resource_id):
                 raise InvalidArgumentValueError(
                     f'{resource_id} is not a valid resource ID for --network-acl-bypass-resource-ids')
 
@@ -511,6 +554,7 @@ def cli_cosmosdb_update(client,
         virtual_network_rules=virtual_network_rules,
         enable_multiple_write_locations=enable_multiple_write_locations,
         disable_key_based_metadata_write_access=disable_key_based_metadata_write_access,
+        disable_local_auth=disable_local_auth,
         key_vault_key_uri=key_uri,
         public_network_access=public_network_access,
         enable_analytical_storage=enable_analytical_storage,
@@ -523,7 +567,9 @@ def cli_cosmosdb_update(client,
         enable_partition_merge=enable_partition_merge,
         enable_burst_capacity=enable_burst_capacity,
         enable_per_region_per_partition_autoscale=enable_prpp_autoscale,
-        minimal_tls_version=minimal_tls_version)
+        minimal_tls_version=minimal_tls_version,
+        enable_pbe=enable_pbe,
+        default_priority_level=default_priority_level)
 
     async_docdb_update = client.begin_update(resource_group_name, account_name, params)
     docdb_account = async_docdb_update.result()
@@ -607,9 +653,10 @@ def _populate_sql_container_definition(sql_container_resource,
                                        partition_key_version,
                                        conflict_resolution_policy,
                                        analytical_storage_ttl,
-                                       vector_embedding_policy):
+                                       vector_embedding_policy,
+                                       full_text_policy):
     if all(arg is None for arg in
-           [partition_key_path, partition_key_version, default_ttl, indexing_policy, unique_key_policy, client_encryption_policy, conflict_resolution_policy, analytical_storage_ttl, vector_embedding_policy]):
+           [partition_key_path, partition_key_version, default_ttl, indexing_policy, unique_key_policy, client_encryption_policy, conflict_resolution_policy, analytical_storage_ttl, vector_embedding_policy, full_text_policy]):
         return False
 
     if partition_key_path is not None:
@@ -641,6 +688,9 @@ def _populate_sql_container_definition(sql_container_resource,
     if vector_embedding_policy is not None:
         sql_container_resource.vector_embedding_policy = vector_embedding_policy
 
+    if full_text_policy is not None:
+        sql_container_resource.full_text_policy = full_text_policy
+
     return True
 
 
@@ -659,7 +709,8 @@ def cli_cosmosdb_sql_container_create(client,
                                       unique_key_policy=None,
                                       conflict_resolution_policy=None,
                                       analytical_storage_ttl=None,
-                                      vector_embedding_policy=None):
+                                      vector_embedding_policy=None,
+                                      full_text_policy=None):
     """Creates an Azure Cosmos DB SQL container """
     sql_container_resource = SqlContainerResource(id=container_name)
 
@@ -672,7 +723,8 @@ def cli_cosmosdb_sql_container_create(client,
                                        partition_key_version,
                                        conflict_resolution_policy,
                                        analytical_storage_ttl,
-                                       vector_embedding_policy)
+                                       vector_embedding_policy,
+                                       full_text_policy)
 
     options = _get_options(throughput, max_throughput)
 
@@ -695,7 +747,8 @@ def cli_cosmosdb_sql_container_update(client,
                                       default_ttl=None,
                                       indexing_policy=None,
                                       analytical_storage_ttl=None,
-                                      vector_embedding_policy=None):
+                                      vector_embedding_policy=None,
+                                      full_text_policy=None):
     """Updates an Azure Cosmos DB SQL container """
     logger.debug('reading SQL container')
     sql_container = client.get_sql_container(resource_group_name, account_name, database_name, container_name)
@@ -707,6 +760,7 @@ def cli_cosmosdb_sql_container_update(client,
     sql_container_resource.unique_key_policy = sql_container.resource.unique_key_policy
     sql_container_resource.conflict_resolution_policy = sql_container.resource.conflict_resolution_policy
     sql_container_resource.vector_embedding_policy = sql_container.resource.vector_embedding_policy
+    sql_container_resource.full_text_policy = sql_container.resource.full_text_policy
 
     # client encryption policy is immutable
     sql_container_resource.client_encryption_policy = sql_container.resource.client_encryption_policy
@@ -720,7 +774,8 @@ def cli_cosmosdb_sql_container_update(client,
                                           None,
                                           None,
                                           analytical_storage_ttl,
-                                          vector_embedding_policy):
+                                          vector_embedding_policy,
+                                          full_text_policy):
         logger.debug('replacing SQL container')
 
     sql_container_create_update_resource = SqlContainerCreateUpdateParameters(
@@ -1821,7 +1876,8 @@ def cli_cosmosdb_restore(cmd,
                          gremlin_databases_to_restore=None,
                          tables_to_restore=None,
                          public_network_access=None,
-                         disable_ttl=None):
+                         disable_ttl=None,
+                         source_backup_location=None):
     from azure.cli.command_modules.cosmosdb._client_factory import cf_restorable_database_accounts
     restorable_database_accounts_client = cf_restorable_database_accounts(cmd.cli_ctx, [])
     restorable_database_accounts = restorable_database_accounts_client.list()
@@ -1839,13 +1895,11 @@ def cli_cosmosdb_restore(cmd,
     if restore_timestamp_datetime_utc > current_dateTime:
         raise CLIError("Restore timestamp {} should be less than current timestamp {}".format(restore_timestamp_datetime_utc, current_dateTime))
 
-    is_source_restorable_account_deleted = False
     for account in restorable_database_accounts_list:
         if account.account_name == account_name:
             if account.deletion_time is not None:
                 if account.deletion_time >= restore_timestamp_datetime_utc >= account.creation_time:
                     target_restorable_account = account
-                    is_source_restorable_account_deleted = True
                     break
             else:
                 if restore_timestamp_datetime_utc >= account.creation_time:
@@ -1854,61 +1908,6 @@ def cli_cosmosdb_restore(cmd,
 
     if target_restorable_account is None:
         raise CLIError("Cannot find a database account with name {} that is online at {}".format(account_name, restore_timestamp))
-
-    # Validate if source account is empty only for live account restores. For deleted account restores the api will not work
-    if not is_source_restorable_account_deleted:
-        restorable_resources = None
-        api_type = target_restorable_account.api_type.lower()
-        arm_location_normalized = target_restorable_account.location.lower().replace(" ", "")
-        if api_type == "sql":
-            try:
-                from azure.cli.command_modules.cosmosdb._client_factory import cf_restorable_sql_resources
-                restorable_sql_resources_client = cf_restorable_sql_resources(cmd.cli_ctx, [])
-                restorable_resources = restorable_sql_resources_client.list(
-                    arm_location_normalized,
-                    target_restorable_account.name,
-                    location,
-                    restore_timestamp_datetime_utc)
-            except ResourceNotFoundError:
-                raise CLIError("Cannot find a database account with name {} that is online at {} in location {}".format(account_name, restore_timestamp, location))
-        elif api_type == "mongodb":
-            try:
-                from azure.cli.command_modules.cosmosdb._client_factory import cf_restorable_mongodb_resources
-                restorable_mongodb_resources_client = cf_restorable_mongodb_resources(cmd.cli_ctx, [])
-                restorable_resources = restorable_mongodb_resources_client.list(
-                    arm_location_normalized,
-                    target_restorable_account.name,
-                    location,
-                    restore_timestamp_datetime_utc)
-            except ResourceNotFoundError:
-                raise CLIError("Cannot find a database account with name {} that is online at {} in location {}".format(account_name, restore_timestamp, location))
-        elif "sql" in api_type and "gremlin" in api_type:
-            try:
-                from azure.cli.command_modules.cosmosdb._client_factory import cf_restorable_gremlin_resources
-                restorable_gremlin_resources_client = cf_restorable_gremlin_resources(cmd.cli_ctx, [])
-                restorable_resources = restorable_gremlin_resources_client.list(
-                    target_restorable_account.location,
-                    target_restorable_account.name,
-                    location,
-                    restore_timestamp_datetime_utc)
-            except ResourceNotFoundError:
-                raise CLIError("Cannot find a database account with name {} that is online at {} in location {}".format(account_name, restore_timestamp, location))
-        elif "sql" in api_type and "table" in api_type:
-            try:
-                from azure.cli.command_modules.cosmosdb._client_factory import cf_restorable_table_resources
-                restorable_table_resources_client = cf_restorable_table_resources(cmd.cli_ctx, [])
-                restorable_resources = restorable_table_resources_client.list(
-                    target_restorable_account.location,
-                    target_restorable_account.name,
-                    location,
-                    restore_timestamp_datetime_utc)
-            except ResourceNotFoundError:
-                raise CLIError("Cannot find a database account with name {} that is online at {} in location {}".format(account_name, restore_timestamp, location))
-        else:
-            raise CLIError("Provided API Type {} is not supported for account {}".format(target_restorable_account.api_type, account_name))
-
-        if restorable_resources is None or not any(restorable_resources):
-            raise CLIError("Database account {} contains no restorable resources in location {} at given restore timestamp {}".format(target_restorable_account, location, restore_timestamp_datetime_utc))
 
     # Trigger restore
     locations = []
@@ -1928,7 +1927,8 @@ def cli_cosmosdb_restore(cmd,
                                     tables_to_restore=tables_to_restore,
                                     arm_location=target_restorable_account.location,
                                     public_network_access=public_network_access,
-                                    disable_ttl=disable_ttl)
+                                    disable_ttl=disable_ttl,
+                                    source_backup_location=source_backup_location)
 
 
 def _convert_to_utc_timestamp(timestamp_string):
@@ -2162,7 +2162,8 @@ def _populate_collection_definition(collection,
                                     default_ttl=None,
                                     indexing_policy=None,
                                     client_encryption_policy=None,
-                                    vector_embedding_policy=None):
+                                    vector_embedding_policy=None,
+                                    full_text_policy=None):
     if all(arg is None for arg in [partition_key_path, default_ttl, indexing_policy]):
         return False
 
@@ -2186,6 +2187,9 @@ def _populate_collection_definition(collection,
     if vector_embedding_policy is not None:
         collection['vectorIndexingPolicy'] = vector_embedding_policy
 
+    if full_text_policy is not None:
+        collection['fullTextPolicy'] = full_text_policy
+
     return True
 
 
@@ -2197,7 +2201,8 @@ def cli_cosmosdb_collection_create(client,
                                    default_ttl=None,
                                    indexing_policy=DEFAULT_INDEXING_POLICY,
                                    client_encryption_policy=None,
-                                   vector_embedding_policy=None):
+                                   vector_embedding_policy=None,
+                                   full_text_policy=None):
     """Creates an Azure Cosmos DB collection """
     collection = {'id': collection_id}
 
@@ -2210,7 +2215,8 @@ def cli_cosmosdb_collection_create(client,
                                     default_ttl,
                                     indexing_policy,
                                     client_encryption_policy,
-                                    vector_embedding_policy)
+                                    vector_embedding_policy,
+                                    full_text_policy)
 
     created_collection = client.CreateContainer(_get_database_link(database_id), collection,
                                                 options)
@@ -3531,9 +3537,149 @@ def cli_offline_region(client,
                        resource_group_name,
                        region):
 
+    # Function to normalize region name
+    def _normalize_region(region_name):
+        return region_name.replace(' ', '').lower()
+
+    # Get the account to check for the region name
+    account = client.get(resource_group_name, account_name)
+    input_region_normalized = _normalize_region(region)
+    matched_region = None
+
+    # Check matches in both read and write locations
+    for loc in account.locations:
+        if _normalize_region(loc.location_name) == input_region_normalized:
+            matched_region = loc.location_name
+            break
+
+    if matched_region:
+        region = matched_region
+
     region_parameter_for_offline = RegionForOnlineOffline(region=region)
     return client.begin_offline_region(
         resource_group_name=resource_group_name,
         account_name=account_name,
         region_parameter_for_offline=region_parameter_for_offline
+    )
+
+
+def cli_cosmosdb_fleet_create(client,
+                              resource_group_name,
+                              fleet_name,
+                              location,
+                              tags=None):
+    """Creates an Azure Cosmos DB Fleet."""
+
+    fleet_parameters = FleetResource(location=location)
+
+    if tags:
+        fleet_parameters.tags = tags
+
+    return client.create(
+        resource_group_name=resource_group_name,
+        fleet_name=fleet_name,
+        body=fleet_parameters)
+
+
+def cli_list_cosmosdb_fleets(client, resource_group_name=None):
+    """Lists Azure Cosmos DB Fleets."""
+    if resource_group_name:
+        return client.list_by_resource_group(resource_group_name=resource_group_name)
+    return client.list()
+
+
+def cli_cosmosdb_fleetspace_create(client,
+                                   resource_group_name,
+                                   fleet_name,
+                                   fleetspace_name,
+                                   fleetspace_body):
+
+    """Creates an Azure Cosmos DB Fleetspace."""
+
+    # Extract service_tier and data_regions from base level (mandatory for create)
+    service_tier = fleetspace_body['properties'].get('serviceTier')
+    data_regions = fleetspace_body['properties'].get('dataRegions')
+
+    if not service_tier:
+        raise CLIError('Missing required field "serviceTier" in properties.')
+
+    if not data_regions:
+        raise CLIError('Missing required field "dataRegions" in properties.')
+
+    throughput_pool_config = FleetspacePropertiesThroughputPoolConfiguration(
+        min_throughput=fleetspace_body['properties']['throughputPoolConfiguration']['minThroughput'],
+        max_throughput=fleetspace_body['properties']['throughputPoolConfiguration']['maxThroughput']
+    )
+
+    fleetspace_resource = FleetspaceResource(
+        fleetspace_api_kind="NoSQL",
+        throughput_pool_configuration=throughput_pool_config,
+        service_tier=service_tier,
+        data_regions=data_regions
+    )
+
+    return client.begin_create(
+        resource_group_name=resource_group_name,
+        fleet_name=fleet_name,
+        fleetspace_name=fleetspace_name,
+        body=fleetspace_resource
+    )
+
+
+def cli_cosmosdb_fleetspace_update(client,
+                                   resource_group_name,
+                                   fleet_name,
+                                   fleetspace_name,
+                                   fleetspace_body):
+
+    """Updates an existing Azure Cosmos DB Fleetspace."""
+
+    # Extract service_tier and data_regions from base level (optional for update)
+    service_tier = fleetspace_body['properties'].get('serviceTier')
+    data_regions = fleetspace_body['properties'].get('dataRegions')
+
+    throughput_pool_config = FleetspacePropertiesThroughputPoolConfiguration(
+        min_throughput=fleetspace_body['properties']['throughputPoolConfiguration']['minThroughput'],
+        max_throughput=fleetspace_body['properties']['throughputPoolConfiguration']['maxThroughput']
+    )
+
+    fleetspace_resource = FleetspaceResource(
+        fleetspace_api_kind="NoSQL",
+        throughput_pool_configuration=throughput_pool_config,
+        service_tier=service_tier,
+        data_regions=data_regions
+    )
+
+    return client.begin_update(
+        resource_group_name=resource_group_name,
+        fleet_name=fleet_name,
+        fleetspace_name=fleetspace_name,
+        body=fleetspace_resource
+    )
+
+
+def cli_cosmosdb_fleetspace_account_create(client,
+                                           resource_group_name,
+                                           fleet_name,
+                                           fleetspace_name,
+                                           fleetspace_account_name,
+                                           fleetspace_account_body):
+
+    """Creates an Azure Cosmos DB Fleetspace Account."""
+
+    fleetspaceAccountPropertiesGlobalDatabaseAccountProperties = FleetspaceAccountPropertiesGlobalDatabaseAccountProperties(
+        resource_id=fleetspace_account_body['properties']['globalDatabaseAccountProperties']['resourceId'],
+        arm_location=fleetspace_account_body['properties']['globalDatabaseAccountProperties']['armLocation'],
+    )
+
+    fleetspace_account_body = FleetspaceAccountResource(
+        global_database_account_properties=fleetspaceAccountPropertiesGlobalDatabaseAccountProperties
+    )
+
+    return client.begin_create(
+        resource_group_name=resource_group_name,
+        fleet_name=fleet_name,
+        fleetspace_name=fleetspace_name,
+        fleetspace_account_name=fleetspace_account_name,
+        body=fleetspace_account_body
     )

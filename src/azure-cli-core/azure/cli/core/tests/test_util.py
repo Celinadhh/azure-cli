@@ -17,7 +17,7 @@ from azure.cli.core.util import \
     (get_file_json, truncate_text, shell_safe_json_parse, b64_to_hex, hash_string, random_string,
      open_page_in_browser, can_launch_browser, handle_exception, ConfiguredDefaultSetter, send_raw_request,
      should_disable_connection_verify, parse_proxy_resource_id, get_az_user_agent, get_az_rest_user_agent,
-     _get_parent_proc_name, is_wsl, run_cmd, run_az_cmd)
+    _get_parent_proc_name, is_wsl, run_cmd, run_az_cmd, roughly_parse_command)
 from azure.cli.core.mock import DummyCli
 
 
@@ -154,10 +154,10 @@ class TestUtils(unittest.TestCase):
     @mock.patch('subprocess.Popen', autospec=True)
     def test_open_page_in_browser(self, subprocess_open_mock, webbrowser_open_mock):
         platform = sys.platform.lower()
-        open_page_in_browser('http://foo')
+        open_page_in_browser("http://foo")
         if is_wsl():
             subprocess_open_mock.assert_called_once_with(['powershell.exe', '-NoProfile',
-                                                          '-Command', 'Start-Process "http://foo"'])
+                                                          '-Command', "Start-Process 'http://foo'"])
         elif platform == 'darwin':
             subprocess_open_mock.assert_called_once_with(['open', 'http://foo'])
         else:
@@ -612,6 +612,31 @@ class TestHandleException(unittest.TestCase):
 
         return mock_http_error
 
+    def test_roughly_parse_command(self):
+        """Test roughly_parse_command function that extracts command parts and converts to lowercase"""
+        # Basic command parsing
+        self.assertEqual(roughly_parse_command(['az', 'vm', 'create']), 'az vm create')
+        self.assertEqual(roughly_parse_command(['account', 'show']), 'account show')
+        self.assertEqual(roughly_parse_command(['network', 'vnet', 'list']), 'network vnet list')
+        
+        # Test case conversion - should convert to lowercase
+        self.assertEqual(roughly_parse_command(['az', 'VM', 'CREATE']), 'az vm create')
+        self.assertEqual(roughly_parse_command(['Account', 'Show']), 'account show')
+        
+        # Test with flags - should stop at first flag and not include flag values
+        self.assertEqual(roughly_parse_command(['az', 'vm', 'create', '--name', 'secretVM']), 'az vm create')
+        self.assertEqual(roughly_parse_command(['az', 'storage', 'account', 'create', '--name', 'mystorageaccount']), 'az storage account create')
+        self.assertEqual(roughly_parse_command(['az', 'keyvault', 'create', '--resource-group', 'myRG', '--name', 'myVault']), 'az keyvault create')
+        
+        # Test with short flags
+        self.assertEqual(roughly_parse_command(['az', 'vm', 'list', '-g', 'myResourceGroup']), 'az vm list')
+        self.assertEqual(roughly_parse_command(['az', 'group', 'create', '-n', 'myGroup', '-l', 'eastus']), 'az group create')
+        
+        # Edge cases
+        self.assertEqual(roughly_parse_command([]), '')
+        self.assertEqual(roughly_parse_command(['az']), 'az')
+        self.assertEqual(roughly_parse_command(['--help']), '')  # Starts with flag
+        self.assertEqual(roughly_parse_command(['-h']), '')  # Starts with short flag
 
 if __name__ == '__main__':
     unittest.main()

@@ -19,8 +19,10 @@ from azure.cli.core.azclierror import (InvalidArgumentValueError,
 from ._utils import (is_valid_connection_string,
                      resolve_store_metadata,
                      get_store_name_from_connection_string,
+                     get_store_endpoint_from_connection_string,
                      validate_feature_flag_name,
-                     validate_feature_flag_key)
+                     validate_feature_flag_key,
+                     is_http_endpoint)
 from ._models import QueryFields
 from ._constants import ImportExportProfiles
 from ._featuremodels import FeatureQueryFields
@@ -64,11 +66,30 @@ Correct format should be Endpoint=https://example.azconfig.io;Id=xxxxx;Secret=xx
 
 def validate_auth_mode(namespace):
     auth_mode = namespace.auth_mode
+    endpoint = getattr(namespace, 'endpoint', None)
+    connection_string = getattr(namespace, 'connection_string', None)
+
+    if auth_mode != "anonymous":
+        # Disallow HTTP endpoints unless explicitly using anonymous mode.
+        if endpoint and is_http_endpoint(endpoint):
+            raise CLIError("HTTP endpoint is only supported when auth mode is 'anonymous'.")
+
+        if connection_string:
+            conn_endpoint = get_store_endpoint_from_connection_string(connection_string)
+            if is_http_endpoint(conn_endpoint):
+                raise CLIError("HTTP endpoint is only supported when auth mode is 'anonymous'.")
+
     if auth_mode == "login":
-        if not namespace.name and not namespace.endpoint:
+        if not namespace.name and not endpoint:
             raise CLIError("App Configuration name or endpoint should be provided if auth mode is 'login'.")
-        if namespace.connection_string:
+        if connection_string:
             raise CLIError("Auth mode should be 'key' when connection string is provided.")
+
+    if auth_mode == "anonymous":
+        if not endpoint:
+            raise RequiredArgumentMissingError("App Configuration endpoint should be provided if auth mode is 'anonymous'.")
+        if connection_string:
+            raise CLIError("Auth mode 'anonymous' only supports the '--endpoint' argument. Connection string is not supported.")
 
 
 def validate_import_depth(namespace):
@@ -105,6 +126,11 @@ def validate_import(namespace):
     elif source == 'appservice':
         if namespace.appservice_account is None:
             raise RequiredArgumentMissingError("Please provide '--appservice-account' argument")
+    elif source == 'aks':
+        if namespace.aks_cluster is None:
+            raise RequiredArgumentMissingError("Please provide '--aks-cluster' argument")
+        if namespace.configmap_name is None:
+            raise RequiredArgumentMissingError("Please provide '--configmap-name' argument")
 
 
 def validate_export(namespace):
@@ -143,6 +169,29 @@ def validate_appservice_name_or_id(cmd, namespace):
             }
         else:
             namespace.appservice_account = parse_resource_id(namespace.appservice_account)
+
+
+def validate_aks_cluster_name_or_id(cmd, namespace):
+    from azure.cli.core.commands.client_factory import get_subscription_id
+    from azure.mgmt.core.tools import is_valid_resource_id, parse_resource_id
+    if namespace.aks_cluster:
+        if not is_valid_resource_id(namespace.aks_cluster):
+            config_store_name = ""
+            if namespace.name:
+                config_store_name = namespace.name
+            elif namespace.connection_string:
+                config_store_name = get_store_name_from_connection_string(namespace.connection_string)
+            else:
+                raise ArgumentUsageError("Please provide App Configuration name or connection string for fetching the AKS cluster details. Alternatively, you can provide a valid ARM ID for the AKS cluster.")
+
+            resource_group, _ = resolve_store_metadata(cmd, config_store_name)
+            namespace.aks_cluster = {
+                "subscription": get_subscription_id(cmd.cli_ctx),
+                "resource_group": resource_group,
+                "name": namespace.aks_cluster
+            }
+        else:
+            namespace.aks_cluster = parse_resource_id(namespace.aks_cluster)
 
 
 def validate_query_fields(namespace):
@@ -294,6 +343,8 @@ def validate_import_profile(namespace):
             raise __construct_kvset_invalid_argument_error(is_exporting=False, argument='prefix')
         if namespace.skip_features:
             raise __construct_kvset_invalid_argument_error(is_exporting=False, argument='skip-features')
+        if namespace.tags:
+            raise __construct_kvset_invalid_argument_error(is_exporting=False, argument='tags')
 
 
 def validate_export_profile(namespace):
@@ -310,6 +361,8 @@ def validate_export_profile(namespace):
             raise __construct_kvset_invalid_argument_error(is_exporting=True, argument='resolve-keyvault')
         if namespace.separator is not None:
             raise __construct_kvset_invalid_argument_error(is_exporting=True, argument='separator')
+        if namespace.dest_tags:
+            raise __construct_kvset_invalid_argument_error(is_exporting=True, argument='dest-tags')
 
 
 def validate_strict_import(namespace):
@@ -363,6 +416,10 @@ def validate_snapshot_filters(namespace):
 
                 if parsed_filter.get("label", None) and not isinstance(parsed_filter["label"], str):
                     raise InvalidArgumentValueError("Label filter must be a string if specified.")
+
+                if parsed_filter.get("tags", None):
+                    if not isinstance(parsed_filter["tags"], list) or not all(isinstance(tag, str) for tag in parsed_filter["tags"]):
+                        raise InvalidArgumentValueError("Tags filter must be a list of strings if specified.")
 
                 filter_parameters.append(parsed_filter)
 
@@ -421,3 +478,42 @@ def validate_sku(namespace):
     else:
         if namespace.replica_location is not None:
             raise RequiredArgumentMissingError("To create a replica, '--replica-name' is required.")
+
+
+def _validate_tag_filter_list(tag_list):
+    if not tag_list or not isinstance(tag_list, list):
+        return
+
+    if len(tag_list) > 5:
+        raise InvalidArgumentValueError("Too many tag filters provided. Maximum allowed is 5.")
+
+    for tag in tag_list:
+        if tag:
+            comps = tag.split('=', 1)
+            if comps[0] == "":
+                raise InvalidArgumentValueError("Tag filter name cannot be empty.")
+
+
+def validate_tag_filters(namespace):
+    """Validates tag filters in the 'tags' attribute."""
+    _validate_tag_filter_list(getattr(namespace, 'tags', None))
+
+
+def validate_import_tag_filters(namespace):
+    """Validates tag filters in the 'src_tags' attribute."""
+    _validate_tag_filter_list(getattr(namespace, 'src_tags', None))
+
+
+def validate_dry_run(namespace):
+    if namespace.dry_run and namespace.yes:
+        raise MutuallyExclusiveArgumentError("The '--dry-run' and '--yes' options cannot be specified together.")
+
+
+def validate_kv_revision_retention_period(namespace):
+    if namespace.kv_revision_retention_period is None:
+        return
+
+    retention_period = int(namespace.kv_revision_retention_period)
+
+    if retention_period < 0:
+        raise InvalidArgumentValueError("The key value revision retention period cannot be negative.")

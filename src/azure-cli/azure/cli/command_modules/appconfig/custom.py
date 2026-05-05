@@ -24,7 +24,9 @@ from azure.mgmt.appconfiguration.models import (ConfigurationStoreUpdateParamete
                                                 AuthenticationMode,
                                                 PublicNetworkAccess,
                                                 PrivateLinkDelegation,
-                                                DataPlaneProxyProperties)
+                                                DataPlaneProxyProperties,
+                                                AzureFrontDoorProperties,
+                                                TelemetryProperties)
 from knack.log import get_logger
 from ._utils import resolve_store_metadata, resolve_deleted_store_metadata
 from ._constants import ARMAuthenticationMode, ProvisioningStatus
@@ -37,7 +39,7 @@ SYSTEM_USER_ASSIGNED = 'SystemAssigned, UserAssigned'
 SYSTEM_ASSIGNED_IDENTITY = '[system]'
 
 
-def create_configstore(cmd,
+def create_configstore(cmd,  # pylint: disable=too-many-locals
                        client,
                        resource_group_name,
                        name,
@@ -53,7 +55,10 @@ def create_configstore(cmd,
                        replica_location=None,
                        no_replica=None,  # pylint: disable=unused-argument
                        arm_auth_mode=None,
-                       enable_arm_private_network_access=None):
+                       enable_arm_private_network_access=None,
+                       appinsights_resource=None,
+                       kv_revision_retention_period=None,
+                       azure_front_door_profile=None):
     if assign_identity is not None and not assign_identity:
         assign_identity = [SYSTEM_ASSIGNED_IDENTITY]
 
@@ -69,6 +74,14 @@ def create_configstore(cmd,
     if arm_auth_mode is not None:
         arm_authentication_mode = AuthenticationMode.LOCAL if arm_auth_mode == ARMAuthenticationMode.LOCAL else AuthenticationMode.PASS_THROUGH
 
+    azure_front_door = None
+    if azure_front_door_profile is not None:
+        azure_front_door = AzureFrontDoorProperties(resource_id=azure_front_door_profile if azure_front_door_profile else None)
+
+    telemetry = None
+    if appinsights_resource is not None:
+        telemetry = TelemetryProperties(resource_id=appinsights_resource if appinsights_resource else None)
+
     configstore_params = ConfigurationStore(location=location.lower(),
                                             identity=__get_resource_identity(assign_identity) if assign_identity else None,
                                             sku=Sku(name=sku),
@@ -78,9 +91,12 @@ def create_configstore(cmd,
                                             soft_delete_retention_in_days=retention_days,
                                             enable_purge_protection=enable_purge_protection,
                                             create_mode=CreateMode.DEFAULT,
+                                            default_key_value_revision_retention_period_in_seconds=kv_revision_retention_period,
+                                            telemetry=telemetry,
                                             data_plane_proxy=DataPlaneProxyProperties(
                                                 authentication_mode=arm_authentication_mode,
-                                                private_link_delegation=arm_private_link_delegation))
+                                                private_link_delegation=arm_private_link_delegation),
+                                            azure_front_door=azure_front_door)
 
     progress = IndeterminateStandardOut()
 
@@ -166,7 +182,7 @@ def show_deleted_configstore(cmd, client, name, location=None):
     return client.get_deleted(config_store_name=name, location=location)
 
 
-def update_configstore(cmd,
+def update_configstore(cmd,  # pylint: disable=too-many-locals
                        client,
                        name,
                        resource_group_name=None,
@@ -180,7 +196,10 @@ def update_configstore(cmd,
                        disable_local_auth=None,
                        enable_purge_protection=None,
                        arm_auth_mode=None,
-                       enable_arm_private_network_access=None):
+                       enable_arm_private_network_access=None,
+                       appinsights_resource=None,
+                       kv_revision_retention_period=None,
+                       azure_front_door_profile=None):
     __validate_cmk(encryption_key_name, encryption_key_vault, encryption_key_version, identity_client_id)
     if resource_group_name is None:
         resource_group_name, _ = resolve_store_metadata(cmd, name)
@@ -197,14 +216,25 @@ def update_configstore(cmd,
     if arm_auth_mode is not None:
         arm_authentication_mode = AuthenticationMode.LOCAL if arm_auth_mode == ARMAuthenticationMode.LOCAL else AuthenticationMode.PASS_THROUGH
 
+    azure_front_door = None
+    if azure_front_door_profile is not None:
+        azure_front_door = AzureFrontDoorProperties(resource_id=azure_front_door_profile if azure_front_door_profile else None)
+
+    telemetry = None
+    if appinsights_resource is not None:
+        telemetry = TelemetryProperties(resource_id=appinsights_resource if appinsights_resource else None)
+
     update_params = ConfigurationStoreUpdateParameters(tags=tags,
                                                        sku=Sku(name=sku) if sku else None,
                                                        public_network_access=public_network_access,
                                                        disable_local_auth=disable_local_auth,
                                                        enable_purge_protection=enable_purge_protection,
+                                                       default_key_value_revision_retention_period_in_seconds=kv_revision_retention_period,
+                                                       telemetry=telemetry,
                                                        data_plane_proxy=DataPlaneProxyProperties(
                                                            authentication_mode=arm_authentication_mode,
-                                                           private_link_delegation=arm_private_link_delegation))
+                                                           private_link_delegation=arm_private_link_delegation),
+                                                       azure_front_door=azure_front_door)
 
     if encryption_key_name is not None:
         key_vault_properties = KeyVaultProperties()

@@ -1536,7 +1536,7 @@ parameters:
     short-summary: The rule that will be disabled. If none specified, all rules in the group will be disabled. If provided, --group-name must be provided too.
     long-summary: |
         Usage: --rule rule-id=MyID state=MyState action=MyAction sensitivity=MySensitivity
-        Allowed values for sensitivity: High, Medium, Low, None
+        Allowed values for sensitivity: High, Medium, Low
         Multiple rules can be specified by using more than one `--rule` argument.
 examples:
   - name: Disable an attack protection rule
@@ -1588,6 +1588,21 @@ examples:
     text: |
         az network application-gateway waf-policy managed-rule rule-set list --policy-name MyPolicy --resource-group MyResourceGroup
     crafted: true
+"""
+
+helps['network application-gateway waf-policy managed-rule exception'] = """
+type: group
+short-summary: Manage exceptions to allow a request to skip the managed rules when the condition is satisfied.
+"""
+
+helps['network application-gateway waf-policy managed-rule exception remove'] = """
+type: command
+short-summary: Remove all managed rule exceptions that are applied on a WAF policy managed rules.
+"""
+
+helps['network application-gateway waf-policy managed-rule exception list'] = """
+type: command
+short-summary: List all managed rule exceptions that are applied on a WAF policy managed rules.
 """
 
 helps['network application-gateway waf-policy managed-rule exclusion'] = """
@@ -5561,6 +5576,11 @@ examples:
     text: |
         az network vpn-connection create --local-gateway2 MyLocalGateway --location westus2 --name MyConnection --resource-group MyResourceGroup --shared-key Abc123 --vnet-gateway1 MyVnetGateway
     crafted: true
+  - name: Create a VPN connection with Certificate authentication using inline JSON.
+    text: |
+        az network vpn-connection create -g MyResourceGroup -n MyConnection \
+          --vnet-gateway1 MyVnetGateway --local-gateway2 MyLocalGateway \
+          --auth-type Certificate --cert-auth '{"outboundAuthCertificate":"https://customerKv.vault/Certificates/outBoundcert/Version","inboundAuthCertificateChain":["MIIC+TCCAeGgAwIBAgIQFOJUqDaxV5xJcKpTKO..","MIIC+TCCAeGgAwIBAgIQPJerInitNblK7yBgkqh.."],"inboundAuthCertificateSubjectName":"CN=rootCert.com"}'
 """
 
 helps['network vpn-connection delete'] = """
@@ -6223,4 +6243,15 @@ examples:
         az network watcher troubleshooting start -g MyResourceGroup --resource MyVPNConnection \\
             --resource-type vpnConnection --storage-account MyStorageAccount \\
             --storage-path https://{storageAccountName}.blob.core.windows.net/{containerName}
+"""
+
+helps['network ddos-custom-policy create'] = """
+type: command
+short-summary: Create a DDoS custom policy.
+examples:
+  - name: Create DDoS custom policy
+    text: |
+        az network ddos-custom-policy create --resource-group rg1 --ddos-custom-policy-name test-ddos-custom-policy \\
+            --location centraluseuap --detection-rule-name detectionRuleTcp \\
+            --detection-mode TrafficThreshold --traffic-type Tcp --packets-per-second 1000000
 """

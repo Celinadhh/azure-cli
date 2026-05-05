@@ -239,7 +239,13 @@ class CosmosDBTests(ScenarioTest):
         assert account1['readLocations'][0]['failoverPriority'] == 1 or account1['readLocations'][1]['failoverPriority'] == 1
 
         self.cmd('az cosmosdb failover-priority-change -n {acc} -g {rg} --failover-policies {read_location}=0 {write_location}=1')
-        account2 = self.cmd('az cosmosdb show -n {acc} -g {rg}').get_output_in_json()
+        import time
+        for _ in range(0, 10):
+            account2 = self.cmd('az cosmosdb show -n {acc} -g {rg}').get_output_in_json()
+            if account2['writeLocations'][0]['locationName'] == "West US":
+                break
+            time.sleep(5)
+
         assert len(account2['writeLocations']) == 1
         assert len(account2['readLocations']) == 2
 
@@ -260,7 +266,7 @@ class CosmosDBTests(ScenarioTest):
             'read_location': read_location
         })
 
-        account_pre_offline = self.cmd('az cosmosdb create -n {acc} -g {rg} --locations regionName={write_location} failoverPriority=0 --locations regionName={read_location} failoverPriority=1').get_output_in_json()
+        account_pre_offline = self.cmd('az cosmosdb create -n {acc} -g {rg} --enable-automatic-failover --locations regionName={write_location} failoverPriority=0 --locations regionName={read_location} failoverPriority=1').get_output_in_json()
 
         assert account_pre_offline['writeLocations'][0]['locationName'] == "East US"
 
@@ -479,6 +485,37 @@ class CosmosDBTests(ScenarioTest):
         # Test delete
         self.cmd('cosmosdb private-endpoint-connection delete --id {pec_id}')
 
+    @ResourceGroupPreparer(name_prefix='cli_test_cosmosdb_account')
+    def test_cosmosdb_network_acl_bypass(self, resource_group):
+        network_acl_bypass_resource_id = '/subscriptions/subId/resourcegroups/rgName/providers/Microsoft.Synapse/workspaces/workspaceName'
+        fabric_network_acl_bypass_resource_id = '/tenants/72f988bf-86f1-41af-91ab-2d7cd011db47/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/Fabric/providers/Microsoft.Fabric/workspaces/3e83f2c3-5a1e-45c3-95f3-53f3a1794e6f'
+
+        self.kwargs.update({
+            'acc': self.create_random_name(prefix='cli', length=40),
+            'network_acl_bypass_resource_id': network_acl_bypass_resource_id,
+            'fabric_network_acl_bypass_resource_id': fabric_network_acl_bypass_resource_id
+        })
+
+        self.cmd('az cosmosdb create -n {acc} -g {rg} --disable-local-auth true')
+        account = self.cmd('az cosmosdb show -n {acc} -g {rg}', checks=[
+            self.check('networkAclBypass', 'None'),
+        ]).get_output_in_json()
+        assert len(account['networkAclBypassResourceIds']) == 0
+
+        self.cmd('az cosmosdb update -n {acc} -g {rg} --network-acl-bypass AzureServices --network-acl-bypass-resource-ids {network_acl_bypass_resource_id}')
+        self.cmd('az cosmosdb show -n {acc} -g {rg}', checks=[
+            self.check('networkAclBypass', 'AzureServices'),
+            self.check('networkAclBypassResourceIds[0]', network_acl_bypass_resource_id)
+        ])
+
+        self.cmd('az cosmosdb update -n {acc} -g {rg} --capabilities EnableFabricNetworkAclBypass --network-acl-bypass AzureServices --network-acl-bypass-resource-ids {fabric_network_acl_bypass_resource_id}')
+        account = self.cmd('az cosmosdb show -n {acc} -g {rg}', checks=[
+            self.check('networkAclBypass', 'AzureServices'),
+            self.check('networkAclBypassResourceIds[0]', fabric_network_acl_bypass_resource_id),
+        ]).get_output_in_json()
+        assert len(account['capabilities']) == 1
+        assert account['capabilities'][0]['name'] == "EnableFabricNetworkAclBypass"
+
     @unittest.skip('Skipping old test due to secrets in response')
     @ResourceGroupPreparer(name_prefix='cli_test_cosmosdb_database')
     def test_cosmosdb_database(self, resource_group):
@@ -590,7 +627,8 @@ class CosmosDBTests(ScenarioTest):
         default_ttl = 1000
         new_default_ttl = 2000
         unique_key_policy = '"{\\"uniqueKeys\\": [{\\"paths\\": [\\"/path/to/key1\\"]}, {\\"paths\\": [\\"/path/to/key2\\"]}]}"'
-        vector_embedding_policy = '"{\\"vectorEmbeddings\\": [{\\"path\\": \\"/vector1\\", \\"dataType\\": \\"float32\\", \\"dimensions\\": 2, \\"distanceFunction\\": \\"dotproduct\\" }]}"'                       
+        vector_embedding_policy = '"{\\"vectorEmbeddings\\": [{\\"path\\": \\"/vector1\\", \\"dataType\\": \\"float32\\", \\"dimensions\\": 2, \\"distanceFunction\\": \\"dotproduct\\" }]}"'
+        full_text_policy = '"{\\"fullTextPaths\\": [{\\"path\\": \\"/ftPath1\\", \\"language\\": \\"en-US\\" }]}"'
         conflict_resolution_policy = '"{\\"mode\\": \\"lastWriterWins\\", \\"conflictResolutionPath\\": \\"/path\\"}"'
         indexing = '"{\\"indexingMode\\": \\"consistent\\", \\"automatic\\": true, \\"includedPaths\\": [{\\"path\\": \\"/*\\"}], \\"excludedPaths\\": [{\\"path\\": \\"/headquarters/employees/?\\"}], \\"vectorIndexes\\": [{\\"path\\": \\"/vector1\\",\\"type\\": \\"flat\\"}]}"'
 
@@ -604,7 +642,8 @@ class CosmosDBTests(ScenarioTest):
             'unique_key': unique_key_policy,
             "conflict_resolution": conflict_resolution_policy,
             "indexing": indexing,
-            "vector_embedding": vector_embedding_policy
+            "vector_embedding": vector_embedding_policy,
+            "full_text_policy": full_text_policy
         })
 
         self.cmd('az cosmosdb create -n {acc} -g {rg} --capabilities EnableNoSQLVectorSearch')
@@ -612,7 +651,7 @@ class CosmosDBTests(ScenarioTest):
 
         assert not self.cmd('az cosmosdb sql container exists -g {rg} -a {acc} -d {db_name} -n {ctn_name}').get_output_in_json()
 
-        container_create = self.cmd('az cosmosdb sql container create -g {rg} -a {acc} -d {db_name} -n {ctn_name} -p {part} --ttl {ttl} --unique-key-policy {unique_key} --vector-embeddings {vector_embedding} --conflict-resolution-policy {conflict_resolution} --idx {indexing}').get_output_in_json()
+        container_create = self.cmd('az cosmosdb sql container create -g {rg} -a {acc} -d {db_name} -n {ctn_name} -p {part} --ttl {ttl} --unique-key-policy {unique_key} --vector-embeddings {vector_embedding} --conflict-resolution-policy {conflict_resolution} --idx {indexing} --full-text-policy {full_text_policy}').get_output_in_json()
 
         assert container_create["name"] == ctn_name
         assert container_create["resource"]["partitionKey"]["paths"][0] == partition_key
@@ -622,6 +661,7 @@ class CosmosDBTests(ScenarioTest):
         assert container_create["resource"]["indexingPolicy"]["excludedPaths"][0]["path"] == "/headquarters/employees/?"
         assert container_create["resource"]["vectorEmbeddingPolicy"]["vectorEmbeddings"][0]["path"] == "/vector1"
         assert container_create["resource"]["indexingPolicy"]["vectorIndexes"][0]["path"] == "/vector1"
+        assert container_create["resource"]["fullTextPolicy"]["fullTextPaths"][0]["path"] == "/ftPath1"
         
         container_update = self.cmd('az cosmosdb sql container update -g {rg} -a {acc} -d {db_name} -n {ctn_name} --ttl {nttl}').get_output_in_json()
         assert container_update["resource"]["defaultTtl"] == new_default_ttl
@@ -2082,7 +2122,7 @@ class CosmosDBTests(ScenarioTest):
 
         import dateutil.parser
         import time
-        from datetime import timedelta
+        from datetime import timedelta, datetime
 
         # This should fail as restore time is before account creation time
         invalid_restore_time = dateutil.parser.parse(restorable_database_account['creationTime']) - timedelta(days=30)
@@ -2092,7 +2132,7 @@ class CosmosDBTests(ScenarioTest):
         self.assertRaises(Exception, lambda: self.cmd('az cosmosdb restore --account-name {acc} -g {rg} --restore-timestamp {invalid_restore_time} --location {loc} --target-database-account-name {restored_acc}'))
 
         # This should fail as restore time is in future
-        invalid_restore_time = dateutil.parser.parse(restorable_database_account['creationTime']) + timedelta(days=30)
+        invalid_restore_time = datetime.now() + timedelta(days=30)
         self.kwargs.update({
             'invalid_restore_time': invalid_restore_time.isoformat()
         })

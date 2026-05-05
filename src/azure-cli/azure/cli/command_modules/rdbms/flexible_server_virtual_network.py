@@ -362,7 +362,7 @@ def prepare_private_dns_zone(db_context, resource_group, server_name, private_dn
         private_dns_zone_suffix = cluster["privateDnsZoneDomain"]
     else:
         dns_suffix_client = db_context.cf_private_dns_zone_suffix(cmd.cli_ctx, '_')
-        private_dns_zone_suffix = dns_suffix_client.execute()
+        private_dns_zone_suffix = dns_suffix_client.get()
         if db_context.command_group == 'mysql':
             private_dns_zone_suffix = private_dns_zone_suffix.private_dns_zone_suffix
 
@@ -454,7 +454,15 @@ def prepare_private_dns_zone(db_context, resource_group, server_name, private_dn
 
 def prepare_public_network(public_access, yes):
     if public_access is None:
-        ip_address = get(IP_ADDRESS_CHECKER).text
+        try:
+            # In USSec and USNat, the IP address checker is not available as the public Internet is not accessible.
+            # When the user does not provide a public IP address or does not disble public access,
+            # the `az cli postgres flexible-server create` command will fail with the error
+            # HTTPSConnectionPool(host='api.ipify.org', port443): Max retries excceeded with url
+            ip_address = get(IP_ADDRESS_CHECKER).text
+        except Exception as ex:
+            raise CLIError("Unable to detect your current IP address. Please provide a valid IP address or CIDR range for --public-access parameter or set --public-access Disabled. Error: {}".format(ex))
+
         logger.warning("Detected current client IP : %s", ip_address)
         if yes:
             return ip_address, ip_address

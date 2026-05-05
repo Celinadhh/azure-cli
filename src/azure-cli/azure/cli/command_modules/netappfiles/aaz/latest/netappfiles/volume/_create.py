@@ -30,9 +30,9 @@ class Create(AAZCommand):
     """
 
     _aaz_info = {
-        "version": "2024-09-01",
+        "version": "2025-12-01",
         "resources": [
-            ["mgmt-plane", "/subscriptions/{}/resourcegroups/{}/providers/microsoft.netapp/netappaccounts/{}/capacitypools/{}/volumes/{}", "2024-09-01"],
+            ["mgmt-plane", "/subscriptions/{}/resourcegroups/{}/providers/microsoft.netapp/netappaccounts/{}/capacitypools/{}/volumes/{}", "2025-12-01"],
         ]
     }
 
@@ -130,12 +130,7 @@ class Create(AAZCommand):
         tags.Element = AAZStrArg()
 
         zones = cls._args_schema.zones
-        zones.Element = AAZStrArg(
-            fmt=AAZStrArgFormat(
-                max_length=255,
-                min_length=1,
-            ),
-        )
+        zones.Element = AAZStrArg()
 
         # define Arg Group "CMK Encryption"
 
@@ -239,6 +234,12 @@ class Create(AAZCommand):
         # define Arg Group "Properties"
 
         _args_schema = cls._args_schema
+        _args_schema.accept_grow_capacity_pool_for_short_term_clone_split = AAZStrArg(
+            options=["--grow-pool-clone-split", "--accept-grow-capacity-pool-for-short-term-clone-split"],
+            arg_group="Properties",
+            help="While auto splitting the short term clone volume, if the parent pool does not have enough space to accommodate the volume after split, it will be automatically resized, which will lead to increased billing. To accept capacity pool size auto grow and create a short term clone volume, set the property as accepted.",
+            enum={"Accepted": "Accepted", "Declined": "Declined"},
+        )
         _args_schema.avs_data_store = AAZStrArg(
             options=["--avs-data-store"],
             arg_group="Properties",
@@ -331,11 +332,6 @@ class Create(AAZCommand):
             help="Specifies whether volume is a Large Volume or Regular Volume.",
             default=False,
         )
-        _args_schema.is_restoring = AAZBoolArg(
-            options=["--is-restoring"],
-            arg_group="Properties",
-            help="Restoring",
-        )
         _args_schema.kerberos_enabled = AAZBoolArg(
             options=["--kerberos-enabled"],
             arg_group="Properties",
@@ -382,7 +378,7 @@ class Create(AAZCommand):
             arg_group="Properties",
             help="serviceLevel",
             default="Premium",
-            enum={"Premium": "Premium", "Standard": "Standard", "StandardZRS": "StandardZRS", "Ultra": "Ultra"},
+            enum={"Flexible": "Flexible", "Premium": "Premium", "Standard": "Standard", "StandardZRS": "StandardZRS", "Ultra": "Ultra"},
         )
         _args_schema.smb_access_based_enumeration = AAZStrArg(
             options=["--smb-access-enumeration", "--smb-access-based-enumeration"],
@@ -484,6 +480,16 @@ class Create(AAZCommand):
         protocol_types = cls._args_schema.protocol_types
         protocol_types.Element = AAZStrArg()
 
+        # define Arg Group "RansomwareProtection"
+
+        _args_schema = cls._args_schema
+        _args_schema.desired_ransomware_protection_state = AAZStrArg(
+            options=["--desired-arp-state", "--desired-ransomware-protection-state"],
+            arg_group="RansomwareProtection",
+            help="The desired value of the Advanced Ransomware Protection feature state available to the volume",
+            enum={"Disabled": "Disabled", "Enabled": "Enabled"},
+        )
+
         # define Arg Group "RemotePath"
 
         _args_schema = cls._args_schema
@@ -506,12 +512,6 @@ class Create(AAZCommand):
         # define Arg Group "Replication"
 
         _args_schema = cls._args_schema
-        _args_schema.endpoint_type = AAZStrArg(
-            options=["--endpoint-type"],
-            arg_group="Replication",
-            help="Indicates whether the local volume is the source or destination for the Volume Replication",
-            enum={"dst": "dst", "src": "src"},
-        )
         _args_schema.remote_volume_region = AAZStrArg(
             options=["--remote-volume-region"],
             arg_group="Replication",
@@ -637,7 +637,7 @@ class Create(AAZCommand):
         def query_parameters(self):
             parameters = {
                 **self.serialize_query_param(
-                    "api-version", "2024-09-01",
+                    "api-version", "2025-12-01",
                     required=True,
                 ),
             }
@@ -669,6 +669,7 @@ class Create(AAZCommand):
 
             properties = _builder.get(".properties")
             if properties is not None:
+                properties.set_prop("acceptGrowCapacityPoolForShortTermCloneSplit", AAZStrType, ".accept_grow_capacity_pool_for_short_term_clone_split")
                 properties.set_prop("avsDataStore", AAZStrType, ".avs_data_store")
                 properties.set_prop("backupId", AAZStrType, ".backup_id", typ_kwargs={"nullable": True})
                 properties.set_prop("capacityPoolResourceId", AAZStrType, ".capacity_pool_resource_id")
@@ -686,7 +687,6 @@ class Create(AAZCommand):
                 properties.set_prop("exportPolicy", AAZObjectType)
                 properties.set_prop("isDefaultQuotaEnabled", AAZBoolType, ".is_default_quota_enabled")
                 properties.set_prop("isLargeVolume", AAZBoolType, ".is_large_volume")
-                properties.set_prop("isRestoring", AAZBoolType, ".is_restoring")
                 properties.set_prop("kerberosEnabled", AAZBoolType, ".kerberos_enabled")
                 properties.set_prop("keyVaultPrivateEndpointResourceId", AAZStrType, ".key_vault_private_endpoint_resource_id")
                 properties.set_prop("ldapEnabled", AAZBoolType, ".ldap_enabled")
@@ -712,6 +712,7 @@ class Create(AAZCommand):
             data_protection = _builder.get(".properties.dataProtection")
             if data_protection is not None:
                 data_protection.set_prop("backup", AAZObjectType)
+                data_protection.set_prop("ransomwareProtection", AAZObjectType)
                 data_protection.set_prop("replication", AAZObjectType)
                 data_protection.set_prop("snapshot", AAZObjectType)
                 data_protection.set_prop("volumeRelocation", AAZObjectType)
@@ -722,9 +723,12 @@ class Create(AAZCommand):
                 backup.set_prop("backupVaultId", AAZStrType, ".backup_vault_id")
                 backup.set_prop("policyEnforced", AAZBoolType, ".policy_enforced")
 
+            ransomware_protection = _builder.get(".properties.dataProtection.ransomwareProtection")
+            if ransomware_protection is not None:
+                ransomware_protection.set_prop("desiredRansomwareProtectionState", AAZStrType, ".desired_ransomware_protection_state")
+
             replication = _builder.get(".properties.dataProtection.replication")
             if replication is not None:
-                replication.set_prop("endpointType", AAZStrType, ".endpoint_type")
                 replication.set_prop("remotePath", AAZObjectType)
                 replication.set_prop("remoteVolumeRegion", AAZStrType, ".remote_volume_region")
                 replication.set_prop("remoteVolumeResourceId", AAZStrType, ".remote_volume_resource_id")
@@ -837,6 +841,9 @@ class Create(AAZCommand):
             _schema_on_200_201.zones = AAZListType()
 
             properties = cls._schema_on_200_201.properties
+            properties.accept_grow_capacity_pool_for_short_term_clone_split = AAZStrType(
+                serialized_name="acceptGrowCapacityPoolForShortTermCloneSplit",
+            )
             properties.actual_throughput_mibps = AAZFloatType(
                 serialized_name="actualThroughputMibps",
                 flags={"read_only": True},
@@ -894,6 +901,7 @@ class Create(AAZCommand):
             )
             properties.effective_network_features = AAZStrType(
                 serialized_name="effectiveNetworkFeatures",
+                flags={"read_only": True},
             )
             properties.enable_subvolumes = AAZStrType(
                 serialized_name="enableSubvolumes",
@@ -915,6 +923,11 @@ class Create(AAZCommand):
                 serialized_name="fileSystemId",
                 flags={"read_only": True},
             )
+            properties.inherited_size_in_bytes = AAZIntType(
+                serialized_name="inheritedSizeInBytes",
+                nullable=True,
+                flags={"read_only": True},
+            )
             properties.is_default_quota_enabled = AAZBoolType(
                 serialized_name="isDefaultQuotaEnabled",
             )
@@ -923,6 +936,7 @@ class Create(AAZCommand):
             )
             properties.is_restoring = AAZBoolType(
                 serialized_name="isRestoring",
+                flags={"read_only": True},
             )
             properties.kerberos_enabled = AAZBoolType(
                 serialized_name="kerberosEnabled",
@@ -1034,6 +1048,9 @@ class Create(AAZCommand):
 
             data_protection = cls._schema_on_200_201.properties.data_protection
             data_protection.backup = AAZObjectType()
+            data_protection.ransomware_protection = AAZObjectType(
+                serialized_name="ransomwareProtection",
+            )
             data_protection.replication = AAZObjectType()
             data_protection.snapshot = AAZObjectType()
             data_protection.volume_relocation = AAZObjectType(
@@ -1051,9 +1068,23 @@ class Create(AAZCommand):
                 serialized_name="policyEnforced",
             )
 
+            ransomware_protection = cls._schema_on_200_201.properties.data_protection.ransomware_protection
+            ransomware_protection.actual_ransomware_protection_state = AAZStrType(
+                serialized_name="actualRansomwareProtectionState",
+                flags={"read_only": True},
+            )
+            ransomware_protection.desired_ransomware_protection_state = AAZStrType(
+                serialized_name="desiredRansomwareProtectionState",
+            )
+
             replication = cls._schema_on_200_201.properties.data_protection.replication
+            replication.destination_replications = AAZListType(
+                serialized_name="destinationReplications",
+                flags={"read_only": True},
+            )
             replication.endpoint_type = AAZStrType(
                 serialized_name="endpointType",
+                flags={"read_only": True},
             )
             replication.remote_path = AAZObjectType(
                 serialized_name="remotePath",
@@ -1071,6 +1102,19 @@ class Create(AAZCommand):
             replication.replication_schedule = AAZStrType(
                 serialized_name="replicationSchedule",
             )
+
+            destination_replications = cls._schema_on_200_201.properties.data_protection.replication.destination_replications
+            destination_replications.Element = AAZObjectType()
+
+            _element = cls._schema_on_200_201.properties.data_protection.replication.destination_replications.Element
+            _element.region = AAZStrType()
+            _element.replication_type = AAZStrType(
+                serialized_name="replicationType",
+            )
+            _element.resource_id = AAZStrType(
+                serialized_name="resourceId",
+            )
+            _element.zone = AAZStrType()
 
             remote_path = cls._schema_on_200_201.properties.data_protection.replication.remote_path
             remote_path.external_host_name = AAZStrType(
